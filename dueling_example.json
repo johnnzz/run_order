@@ -1,0 +1,57 @@
+{
+	"schema_version": "1.0.0",
+    "event": {
+        "name": "World Championships 2024",
+        "org": "Dueling Dogs",
+        "city": "Dubuque",
+        "state": "IA",
+        "start_date": "2024-03-19"
+    },
+    "location": {
+        "pool1": {
+            "2024-03-19 16:00:00-07:00": [
+                {
+                    "group": "dueling_class_2",
+                    "dog": {
+                        "call_name": "Daisy",
+                        "org_ids": {
+                            "ddww": "1231"
+                        }
+                    },
+                    "handler": "John Smith"
+                },
+                {
+                    "group": "dueling_class_2",
+                    "dog": {
+                        "call_name": "Sugar",
+                        "org_ids": {
+                            "akc": "1222",
+                            "ddww": "432"
+                        }
+                    },
+                    "handler": "Tracy Jones"
+                }
+            ]
+        },
+        "2024-03-19 16:05:13-07:00": [
+            {
+                "group": "dueling_class_2",
+                "dog": {
+                    "call_name": "Fluffy",
+                    "org_ids": {}
+                },
+                "handler": "Jane Smith"
+            },
+            {
+                "group": "dueling_class_2",
+                "dog": {
+                    "call_name": "Remmi",
+                    "org_ids": {
+                        "ddww": "2346"
+                    }
+                },
+                "handler": "Joe Johnson"
+            }
+        ]
+    }
+}
