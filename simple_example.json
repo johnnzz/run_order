@@ -1,0 +1,30 @@
+{
+    "schema_version": "1.0.0",
+    "event": {
+        "name": "Kickass Disc Dogs",
+        "org": "K9 Frisbee Worldwide League",
+        "city": "Everett",
+        "state": "WA",
+        "start_date": "2024-03-19"
+    },
+    "location": {
+        "field": {
+            "2024-03-19 16:00:00-07:00": [
+                {
+                    "dog": {
+                        "call_name": "Sugar"
+                    },
+                    "handler": "Joe Smith"
+                }
+            ]
+        },
+        "2024-03-19 16:05:13-07:00": [
+            {
+                "dog": {
+                    "call_name": "Remmi"
+                },
+                "handler": "Joe Johnson"
+            }
+        ]
+    }
+}
