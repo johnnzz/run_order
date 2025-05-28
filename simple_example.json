@@ -16,15 +16,15 @@
                     },
                     "handler": "Joe Smith"
                 }
+            ],
+            "2024-03-19 16:05:13-07:00": [
+                {
+                    "dog": {
+                        "call_name": "Remmi"
+                    },
+                    "handler": "Joe Johnson"
+                }
             ]
-        },
-        "2024-03-19 16:05:13-07:00": [
-            {
-                "dog": {
-                    "call_name": "Remmi"
-                },
-                "handler": "Joe Johnson"
-            }
-        ]
+        }
     }
 }
