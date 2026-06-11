@@ -1,14 +1,36 @@
 #!/usr/bin/env python3
-"""Utilities for creating, reading, writing, and appending run order JSON files."""
+"""Utilities for creating, reading, writing, and appending run order JSON files.
+
+Usage:
+    run_order.py create <path> --name=<name> --organization=<org> --city=<city> --state=<state> --date=<date> [--schema-version=<version>]
+    run_order.py read <path>
+    run_order.py write <path> [--output=<output>]
+    run_order.py append <path> --timestamp=<timestamp> --json-data=<json> [--location-path=<location>]
+    run_order.py (-h | --help)
+
+Options:
+    --name=<name>                 Event name.
+    --organization=<org>          Event organization.
+    --city=<city>                 Event city.
+    --state=<state>               Event state.
+    --date=<date>                 Event start date (YYYY-MM-DD).
+    --schema-version=<version>    Schema version [default: 1.0.0].
+    --output=<output>             Optional alternate output path for write.
+    --timestamp=<timestamp>       Timestamp slot for append.
+    --json-data=<json>            Entry object as JSON for append.
+    --location-path=<location>    Dot-separated location path (e.g. pool1 or field) [default: ].
+    -h --help                     Show this screen.
+"""
 
 from __future__ import annotations
 
-import argparse
 import json
 from collections.abc import Iterator, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from docopt import docopt
 
 
 DEFAULT_SCHEMA_VERSION = "1.0.0"
@@ -175,84 +197,57 @@ class RunOrder:
                 yield from RunOrder._walk_location(value, location_path + (key,))
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    create_parser = subparsers.add_parser("create", help="Create a new run order JSON file")
-    create_parser.add_argument("path", type=Path, help="Output JSON file path")
-    create_parser.add_argument("--event-name", required=True)
-    create_parser.add_argument("--event-org", required=True)
-    create_parser.add_argument("--event-city", required=True)
-    create_parser.add_argument("--event-state", required=True)
-    create_parser.add_argument("--event-start-date", required=True)
-    create_parser.add_argument("--schema-version", default=DEFAULT_SCHEMA_VERSION)
-
-    read_parser = subparsers.add_parser("read", help="Print run order entries")
-    read_parser.add_argument("path", type=Path)
-
-    write_parser = subparsers.add_parser("write", help="Write in-memory changes back to disk")
-    write_parser.add_argument("path", type=Path)
-    write_parser.add_argument("--output", type=Path, help="Optional alternate output path")
-
-    append_parser = subparsers.add_parser("append", help="Append an entry to a timestamp slot")
-    append_parser.add_argument("path", type=Path)
-    append_parser.add_argument("--timestamp", required=True)
-    append_parser.add_argument(
-        "--location-path",
-        default="",
-        help="Dot-separated location path, e.g. pool1 or field",
-    )
-    append_parser.add_argument("--entry-json", required=True, help="Entry object as JSON")
-
-    return parser
-
-
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = _build_parser()
-    args = parser.parse_args(argv)
+    arguments = docopt(__doc__, argv=argv)
+    path = Path(arguments["<path>"])
 
-    if args.command == "create":
+    if arguments["create"]:
         RunOrder.create(
-            args.path,
+            path,
             event={
-                "name": args.event_name,
-                "org": args.event_org,
-                "city": args.event_city,
-                "state": args.event_state,
-                "start_date": args.event_start_date,
+                "name": arguments["--name"],
+                "org": arguments["--organization"],
+                "city": arguments["--city"],
+                "state": arguments["--state"],
+                "start_date": arguments["--date"],
             },
-            schema_version=args.schema_version,
+            schema_version=arguments["--schema-version"],
         )
-        print(f"Created {args.path}")
+        print(f"Created {path}")
         return 0
 
-    if args.command == "read":
-        run_order = RunOrder.read(args.path)
+    if arguments["read"]:
+        run_order = RunOrder.read(path)
         for location_path, timestamp, entry in run_order:
             location = ".".join(location_path) or "<root>"
             print(f"{location} @ {timestamp}: {json.dumps(entry, sort_keys=True)}")
         print(f"{len(run_order)} entries")
         return 0
 
-    if args.command == "write":
-        run_order = RunOrder.read(args.path)
-        output_path = run_order.write(args.output)
+    if arguments["write"]:
+        run_order = RunOrder.read(path)
+        output = arguments["--output"]
+        output_path = run_order.write(Path(output) if output else None)
         print(f"Wrote {output_path}")
         return 0
 
-    if args.command == "append":
-        run_order = RunOrder.read(args.path)
-        location_path = tuple(part for part in args.location_path.split(".") if part)
-        entry = json.loads(args.entry_json)
+    if arguments["append"]:
+        run_order = RunOrder.read(path)
+        location_path = tuple(
+            part for part in arguments["--location-path"].split(".") if part
+        )
+        entry = json.loads(arguments["--json-data"])
         if not isinstance(entry, dict):
-            raise SystemExit("--entry-json must decode to a JSON object")
-        run_order.append(entry, timestamp=args.timestamp, location_path=location_path)
+            raise SystemExit("--json-data must decode to a JSON object")
+        run_order.append(
+            entry,
+            timestamp=arguments["--timestamp"],
+            location_path=location_path,
+        )
         run_order.write()
-        print(f"Appended entry to {args.path}")
+        print(f"Appended entry to {path}")
         return 0
 
-    parser.error(f"Unsupported command: {args.command}")
     return 2
 
 
