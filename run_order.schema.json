@@ -1,0 +1,115 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://github.com/johnnzz/run_order/run_order.schema.json",
+    "title": "Run Order",
+    "description": "Schema for run order JSON files used to schedule dog sport event runs.",
+    "type": "object",
+    "required": [
+        "schema_version",
+        "event",
+        "location"
+    ],
+    "additionalProperties": false,
+    "properties": {
+        "schema_version": {
+            "type": "string",
+            "pattern": "^\\d+\\.\\d+\\.\\d+$",
+            "description": "Semantic version of this document format."
+        },
+        "event": {
+            "$ref": "#/$defs/event"
+        },
+        "location": {
+            "$ref": "#/$defs/locationNode"
+        }
+    },
+    "$defs": {
+        "event": {
+            "type": "object",
+            "required": [
+                "name",
+                "org",
+                "city",
+                "state",
+                "start_date"
+            ],
+            "additionalProperties": false,
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "org": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "city": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "state": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "start_date": {
+                    "type": "string",
+                    "format": "date"
+                }
+            }
+        },
+        "locationNode": {
+            "type": "object",
+            "minProperties": 1,
+            "patternProperties": {
+                "^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}[+-]\\d{2}:\\d{2}$": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/runEntry"
+                    }
+                }
+            },
+            "additionalProperties": {
+                "$ref": "#/$defs/locationNode"
+            }
+        },
+        "runEntry": {
+            "type": "object",
+            "required": [
+                "dog",
+                "handler"
+            ],
+            "additionalProperties": true,
+            "properties": {
+                "group": {
+                    "type": "string"
+                },
+                "dog": {
+                    "$ref": "#/$defs/dog"
+                },
+                "handler": {
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "dog": {
+            "type": "object",
+            "required": [
+                "call_name"
+            ],
+            "additionalProperties": false,
+            "properties": {
+                "call_name": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "org_ids": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                }
+            }
+        }
+    }
+}
