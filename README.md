@@ -10,7 +10,7 @@ A run order file is a single JSON object with three top-level fields:
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `schema_version` | string | Format version in semver form, currently `1.0.0` |
+| `schema_version` | string | Format version in semver form, currently `1.1.0` |
 | `event` | object | Event metadata (name, org, location, start date) |
 | `location` | object | Recursive tree of venue locations and scheduled runs |
 
@@ -106,7 +106,7 @@ This repository includes two example files:
 
 ```json
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "event": {
     "name": "Kickass Disc Dogs",
     "org": "K9 Frisbee Worldwide League",
@@ -162,7 +162,14 @@ Tools that read or append runs typically address a slot using a dot-separated lo
 
 ## Versioning
 
-The current schema version is **1.0.0**. Increment `schema_version` in documents when making incompatible format changes. Additive changes (new optional fields on run entries) do not require a version bump because `runEntry` allows additional properties.
+The current schema version is **1.1.0**. Documents using **1.0.0** remain valid; the schema accepts both versions.
+
+| Version | Changes |
+| --- | --- |
+| **1.1.0** | Allow empty `location` objects; document format used by dogsport-photo-tools |
+| **1.0.0** | Initial format |
+
+Increment `schema_version` in documents when making incompatible format changes. Additive changes (new optional fields on run entries) do not require a version bump because `runEntry` allows additional properties.
 
 ## Related tools
 

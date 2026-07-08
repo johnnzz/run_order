@@ -14,9 +14,13 @@
         "schema_version": {
             "type": "string",
             "pattern": "^\\d+\\.\\d+\\.\\d+$",
-            "description": "Semantic version of this document format. Current version is 1.0.0.",
+            "description": "Semantic version of this document format. Current version is 1.1.0.",
+            "enum": [
+                "1.0.0",
+                "1.1.0"
+            ],
             "examples": [
-                "1.0.0"
+                "1.1.0"
             ]
         },
         "event": {
@@ -28,7 +32,7 @@
     },
     "examples": [
         {
-            "schema_version": "1.0.0",
+            "schema_version": "1.1.0",
             "event": {
                 "name": "Kickass Disc Dogs",
                 "org": "K9 Frisbee Worldwide League",
