@@ -2,7 +2,7 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://github.com/johnnzz/run_order/run_order.schema.json",
     "title": "Run Order",
-    "description": "Schema for run order JSON files used to schedule dog sport event runs.",
+    "description": "Schema for run order JSON files used to schedule dog sport event runs. Consumed by dogsport-photo-tools and other event workflow utilities.",
     "type": "object",
     "required": [
         "schema_version",
@@ -14,7 +14,10 @@
         "schema_version": {
             "type": "string",
             "pattern": "^\\d+\\.\\d+\\.\\d+$",
-            "description": "Semantic version of this document format."
+            "description": "Semantic version of this document format. Current version is 1.0.0.",
+            "examples": [
+                "1.0.0"
+            ]
         },
         "event": {
             "$ref": "#/$defs/event"
@@ -23,9 +26,35 @@
             "$ref": "#/$defs/locationNode"
         }
     },
+    "examples": [
+        {
+            "schema_version": "1.0.0",
+            "event": {
+                "name": "Kickass Disc Dogs",
+                "org": "K9 Frisbee Worldwide League",
+                "city": "Everett",
+                "state": "WA",
+                "start_date": "2024-03-19"
+            },
+            "location": {
+                "field": {
+                    "2024-03-19 16:00:00-07:00": [
+                        {
+                            "dog": {
+                                "call_name": "Sugar"
+                            },
+                            "handler": "Joe Smith"
+                        }
+                    ]
+                }
+            }
+        }
+    ],
     "$defs": {
         "event": {
             "type": "object",
+            "title": "Event",
+            "description": "Metadata describing the trial, competition, or other dog sport event.",
             "required": [
                 "name",
                 "org",
@@ -37,32 +66,57 @@
             "properties": {
                 "name": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "Human-readable event name.",
+                    "examples": [
+                        "World Championships 2024"
+                    ]
                 },
                 "org": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "Sanctioning organization or event producer.",
+                    "examples": [
+                        "Dueling Dogs",
+                        "AKC"
+                    ]
                 },
                 "city": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "City where the event is held.",
+                    "examples": [
+                        "Dubuque"
+                    ]
                 },
                 "state": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "State, province, or region code for the event location.",
+                    "examples": [
+                        "IA",
+                        "WA"
+                    ]
                 },
                 "start_date": {
                     "type": "string",
-                    "format": "date"
+                    "format": "date",
+                    "description": "First day of the event in ISO 8601 calendar date form (YYYY-MM-DD).",
+                    "examples": [
+                        "2024-03-19"
+                    ]
                 }
             }
         },
         "locationNode": {
             "type": "object",
-            "minProperties": 1,
+            "title": "Location tree",
+            "description": "Recursive map of venue locations to scheduled runs. Keys are either nested location names (for example pool1, ring2, field) or timestamp slots. Timestamp keys hold arrays of run entries; all other keys hold nested location nodes.",
+            "properties": {},
             "patternProperties": {
                 "^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}[+-]\\d{2}:\\d{2}$": {
                     "type": "array",
+                    "description": "Runs scheduled for this location at the given local timestamp with numeric timezone offset.",
                     "items": {
                         "$ref": "#/$defs/runEntry"
                     }
@@ -74,6 +128,8 @@
         },
         "runEntry": {
             "type": "object",
+            "title": "Run entry",
+            "description": "One dog-and-handler pair scheduled in a timestamp slot. Additional tool-specific fields are allowed.",
             "required": [
                 "dog",
                 "handler"
@@ -81,19 +137,30 @@
             "additionalProperties": true,
             "properties": {
                 "group": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Optional class, round, or competition group identifier.",
+                    "examples": [
+                        "dueling_class_2",
+                        "masters_round_1"
+                    ]
                 },
                 "dog": {
                     "$ref": "#/$defs/dog"
                 },
                 "handler": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "Handler name as shown on the running order.",
+                    "examples": [
+                        "John Smith"
+                    ]
                 }
             }
         },
         "dog": {
             "type": "object",
+            "title": "Dog",
+            "description": "Identifying information for the dog in this run.",
             "required": [
                 "call_name"
             ],
@@ -101,13 +168,26 @@
             "properties": {
                 "call_name": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "The dog's call name.",
+                    "examples": [
+                        "Daisy",
+                        "Sugar"
+                    ]
                 },
                 "org_ids": {
                     "type": "object",
+                    "description": "Map of organization abbreviations to registration or entry numbers for this dog.",
                     "additionalProperties": {
                         "type": "string"
-                    }
+                    },
+                    "examples": [
+                        {
+                            "akc": "1222",
+                            "ddww": "1231"
+                        },
+                        {}
+                    ]
                 }
             }
         }
