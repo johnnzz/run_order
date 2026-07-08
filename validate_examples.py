@@ -16,7 +16,7 @@ except ImportError:
 
 ROOT = Path(__file__).resolve().parent
 SCHEMA_PATH = ROOT / "run_order.schema.json"
-CURRENT_SCHEMA_VERSION = "1.1.0"
+CURRENT_SCHEMA_VERSION = "2.0.0"
 EXAMPLE_PATHS = sorted(ROOT.glob("*_example.json"))
 
 
