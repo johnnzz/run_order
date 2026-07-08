@@ -50,6 +50,15 @@ Each entry is one chronological record with a shared envelope:
 | `location` | yes | string | Location or lane name (`Dock 1`, `Dock 1 Lane 2`, `default`, etc.) |
 | `type` | yes | string | Entry type (see below) |
 
+#### Entry ordering
+
+Entries are a chronological log sorted by `at`. When a timeseries file includes setup records for a location, write them before the first `team_check_in` for that location:
+
+- If the file uses discipline information, append a `set_discipline` entry before team check-ins at that location.
+- If the file uses photographer information, append a `photographer_check_in` entry before team check-ins at that location.
+
+`photographer_check_in` is normally written by a photographer-centric app such as the DogSportPhoto teams app. Third-party, handler-oriented timeseries sources (for example run lists or registration exports) typically emit `team_check_in` entries only and do not include photographer setup records.
+
 Entry types:
 
 #### `team_check_in`
