@@ -1,0 +1,48 @@
+{
+    "schema_version": "2.0.0",
+    "event": {
+        "name": "Teams Event",
+        "start_date": "2026-06-22",
+        "end_date": "2026-06-24",
+        "club": "Kickass Disc Dogs",
+        "org_type": "dock"
+    },
+    "location": {
+        "Dock 1": {
+            "2026-06-23 05:22:35+00:00": [
+                {
+                    "photographer": "John Navitsky",
+                    "cameras": [
+                        {
+                            "model": "Z8",
+                            "serial": "3006404"
+                        }
+                    ]
+                },
+                {
+                    "discipline": "Distance Jump"
+                },
+                {
+                    "handler": "Jane Handler (JH01)",
+                    "handler-email": "jane@example.com",
+                    "photo_request": "Yes",
+                    "dog": {
+                        "call_name": "Rex (RX01)",
+                        "breed": "Border Collie",
+                        "color": "Black"
+                    },
+                    "team": "Jane Handler n Rex"
+                }
+            ],
+            "default": {
+                "2026-06-23 06:00:00+00:00": [
+                    {
+                        "handler": "Proxy Handler",
+                        "handler-email": "proxy@example.com",
+                        "photo_request": "No"
+                    }
+                ]
+            }
+        }
+    }
+}
