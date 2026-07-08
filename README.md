@@ -128,37 +128,35 @@ An empty `entries` array (`[]`) is valid for a newly created file with no record
 
 | File | Description |
 | --- | --- |
-| [`minimal_event_example.json`](minimal_event_example.json) | New file with only required event metadata and empty entries |
-| [`simple_example.json`](simple_example.json) | Minimal event with two team check-ins |
-| [`dueling_example.json`](dueling_example.json) | Dueling Dogs example with org IDs |
-| [`teams_app_example.json`](teams_app_example.json) | All three entry types: photographer check-in, set discipline, and team check-in |
+| [`minimal_example.json`](minimal_example.json) | Required fields only |
+| [`full_example.json`](full_example.json) | All optional event, entry, handler, dog, team, and attendance fields |
 
 ### Minimal example
+
+Only required fields: `schema_version`, `event.name`, and one `team_check_in` with `at`, `location`, `type`, and `handler.name`.
 
 ```json
 {
   "schema_version": "2.0.0",
   "event": {
-    "name": "Kickass Disc Dogs",
-    "dogsportphoto_code": "1001",
-    "org": "K9 Frisbee Worldwide League",
-    "city": "Everett",
-    "state": "WA",
-    "start_date": "2024-03-19",
-    "end_date": "2024-03-19"
+    "name": "New Event"
   },
   "entries": [
     {
       "at": "2024-03-19T16:00:00-07:00",
       "location": "field",
       "type": "team_check_in",
-      "handler": { "name": "Joe Smith" },
-      "dog": { "name": "Sugar" },
-      "team": { "name": "Joe Smith n Sugar" }
+      "handler": {
+        "name": "Joe Smith"
+      }
     }
   ]
 }
 ```
+
+An empty `entries` array is also valid when no records have been written yet.
+
+See [`full_example.json`](full_example.json) for all three entry types with optional event metadata, handler contact fields, dog breed and org IDs, team codes, and attendance notes.
 
 ## Schema
 
