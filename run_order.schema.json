@@ -29,11 +29,7 @@
         "event": {
             "type": "object",
             "required": [
-                "name",
-                "dogsportphoto_code",
-                "org",
-                "start_date",
-                "end_date"
+                "name"
             ],
             "additionalProperties": false,
             "properties": {
@@ -45,22 +41,22 @@
                 "dogsportphoto_code": {
                     "type": "string",
                     "pattern": "^\\d{4}$",
-                    "description": "Four-digit DogSportPhoto event code; also used in the on-disk filename."
+                    "description": "Optional four-digit DogSportPhoto event code. Used by the teams app and in on-disk filenames when present."
                 },
                 "org": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Organization or sanctioning body."
+                    "description": "Optional organization or sanctioning body. Used by the teams app when present."
                 },
                 "start_date": {
                     "type": "string",
                     "format": "date",
-                    "description": "Inclusive event start date."
+                    "description": "Optional inclusive event start date. Used by the teams app when present."
                 },
                 "end_date": {
                     "type": "string",
                     "format": "date",
-                    "description": "Inclusive event end date."
+                    "description": "Optional inclusive event end date. Used by the teams app when present."
                 },
                 "city": {
                     "type": "string",
@@ -84,11 +80,6 @@
                     "type": "string",
                     "minLength": 1,
                     "description": "Organization type, such as dock or dueling dogs."
-                },
-                "sheet_timezone": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "IANA timezone for naive Google Sheet timestamps."
                 }
             }
         },
@@ -292,6 +283,8 @@
         },
         "setDisciplineEntry": {
             "type": "object",
+            "title": "Set discipline",
+            "description": "Records the active discipline at a location. Written by the teams app when a photographer or assistant selects a discipline.",
             "required": [
                 "at",
                 "location",
@@ -311,7 +304,8 @@
                 },
                 "discipline": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "Discipline name, such as Distance Jump or Speed Retrieve."
                 }
             }
         },
