@@ -23,23 +23,22 @@ Required fields:
 | Field | Type | Example |
 | --- | --- | --- |
 | `name` | string | `"World Championships 2024"` |
+
+Optional fields (used by the teams app when available):
+
+| Field | Type | Example |
+| --- | --- | --- |
 | `dogsportphoto_code` | string | `"1234"` (four digits) |
 | `org` | string | `"Dueling Dogs"` |
 | `start_date` | date string | `"2024-03-19"` |
 | `end_date` | date string | `"2024-03-21"` |
-
-Optional fields:
-
-| Field | Type | Example |
-| --- | --- | --- |
 | `city` | string | `"Dubuque"` |
 | `state` | string | `"IA"` |
 | `club` | string | `"Kickass Disc Dogs"` |
 | `venue` | string | `"Evergreen State Fairgrounds"` |
 | `org_type` | string | `"dock"` |
-| `sheet_timezone` | string | `"America/Los_Angeles"` |
 
-The four-digit `dogsportphoto_code` matches the DogSportPhoto event code and appears in on-disk filenames such as `Summer_Splash-1234-ts.json`.
+When present, the four-digit `dogsportphoto_code` matches the DogSportPhoto event code and appears in on-disk filenames such as `Summer_Splash-1234-ts.json`. Timeseries files do not carry sheet timezone settings; those live in event app configuration instead.
 
 ### Entries
 
@@ -55,6 +54,8 @@ Entry types:
 
 #### `team_check_in`
 
+Records a handler check-in, optionally with a dog and team details.
+
 | Field | Required | Type | Description |
 | --- | --- | --- | --- |
 | `handler` | yes | object | Handler identity (`name` required) |
@@ -66,6 +67,8 @@ Handler, dog, and team objects may include a `dogsportphoto_code` when registere
 
 #### `photographer_check_in`
 
+Records a photographer and their cameras at a location.
+
 | Field | Required | Type | Description |
 | --- | --- | --- | --- |
 | `photographer` | yes | object | Photographer `name` and `cameras` array |
@@ -74,9 +77,24 @@ Each camera object requires `model` and `serial` strings.
 
 #### `set_discipline`
 
+Records the active discipline at a location. The teams app writes this when a photographer or assistant selects a discipline for a shoot location.
+
 | Field | Required | Type | Description |
 | --- | --- | --- | --- |
-| `discipline` | yes | string | Discipline name |
+| `discipline` | yes | string | Discipline name, such as `Distance Jump` or `Speed Retrieve` |
+
+Example:
+
+```json
+{
+  "at": "2026-06-23T14:05:12-06:00",
+  "location": "Dock 1",
+  "type": "set_discipline",
+  "discipline": "Distance Jump"
+}
+```
+
+A location may have many `set_discipline` entries over time. Consumers should treat the latest entry at a location as the current discipline unless they have another source of truth.
 
 ### Handler object
 
@@ -110,9 +128,10 @@ An empty `entries` array (`[]`) is valid for a newly created file with no record
 
 | File | Description |
 | --- | --- |
+| [`minimal_event_example.json`](minimal_event_example.json) | New file with only required event metadata and empty entries |
 | [`simple_example.json`](simple_example.json) | Minimal event with two team check-ins |
 | [`dueling_example.json`](dueling_example.json) | Dueling Dogs example with org IDs |
-| [`teams_app_example.json`](teams_app_example.json) | Photographer setup, discipline selection, team check-in, and handler-only check-in |
+| [`teams_app_example.json`](teams_app_example.json) | All three entry types: photographer check-in, set discipline, and team check-in |
 
 ### Minimal example
 
@@ -170,7 +189,7 @@ The current schema version is **2.0.0**, used by dogsport-photo-tools. Older 1.x
 
 | Version | Changes |
 | --- | --- |
-| **2.0.0** | Chronological `entries` log; structured handler/dog/team objects; `dogsportphoto_code` on event; entry types `team_check_in`, `photographer_check_in`, `set_discipline` |
+| **2.0.0** | Chronological `entries` log; structured handler/dog/team objects; optional event metadata used by the teams app; entry types `team_check_in`, `photographer_check_in`, `set_discipline` |
 | **1.1.0** | Allow empty `location` objects (legacy tree format) |
 | **1.0.0** | Initial nested `location` tree format |
 
