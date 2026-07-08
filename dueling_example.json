@@ -2,57 +2,80 @@
     "schema_version": "2.0.0",
     "event": {
         "name": "World Championships 2024",
+        "dogsportphoto_code": "2024",
         "org": "Dueling Dogs",
         "city": "Dubuque",
         "state": "IA",
         "start_date": "2024-03-19",
         "end_date": "2024-03-19"
     },
-    "location": {
-        "pool1": {
-            "2024-03-19 16:00:00-07:00": [
-                {
-                    "group": "dueling_class_2",
-                    "dog": {
-                        "call_name": "Daisy",
-                        "org_ids": {
-                            "ddww": "1231"
-                        }
-                    },
-                    "handler": "John Smith"
-                },
-                {
-                    "group": "dueling_class_2",
-                    "dog": {
-                        "call_name": "Sugar",
-                        "org_ids": {
-                            "akc": "1222",
-                            "ddww": "432"
-                        }
-                    },
-                    "handler": "Tracy Jones"
-                }
-            ]
-        },
-        "2024-03-19 16:05:13-07:00": [
-            {
-                "group": "dueling_class_2",
-                "dog": {
-                    "call_name": "Fluffy",
-                    "org_ids": {}
-                },
-                "handler": "Jane Smith"
+    "entries": [
+        {
+            "at": "2024-03-19T16:00:00-07:00",
+            "location": "pool1",
+            "type": "team_check_in",
+            "handler": {
+                "name": "John Smith"
             },
-            {
-                "group": "dueling_class_2",
-                "dog": {
-                    "call_name": "Remmi",
-                    "org_ids": {
-                        "ddww": "2346"
-                    }
-                },
-                "handler": "Joe Johnson"
+            "dog": {
+                "name": "Daisy",
+                "org_ids": {
+                    "ddww": "1231"
+                }
+            },
+            "team": {
+                "name": "John Smith n Daisy"
             }
-        ]
-    }
+        },
+        {
+            "at": "2024-03-19T16:00:00-07:00",
+            "location": "pool1",
+            "type": "team_check_in",
+            "handler": {
+                "name": "Tracy Jones"
+            },
+            "dog": {
+                "name": "Sugar",
+                "org_ids": {
+                    "akc": "1222",
+                    "ddww": "432"
+                }
+            },
+            "team": {
+                "name": "Tracy Jones n Sugar"
+            }
+        },
+        {
+            "at": "2024-03-19T16:05:13-07:00",
+            "location": "default",
+            "type": "team_check_in",
+            "handler": {
+                "name": "Jane Smith"
+            },
+            "dog": {
+                "name": "Fluffy",
+                "org_ids": {}
+            },
+            "team": {
+                "name": "Jane Smith n Fluffy"
+            }
+        },
+        {
+            "at": "2024-03-19T16:05:13-07:00",
+            "location": "default",
+            "type": "team_check_in",
+            "handler": {
+                "name": "Joe Johnson"
+            },
+            "dog": {
+                "name": "Remmi",
+                "org_ids": {
+                    "ddww": "2346"
+                }
+            },
+            "team": {
+                "name": "Joe Johnson n Remmi"
+            }
+        }
+    ]
 }

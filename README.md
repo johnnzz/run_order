@@ -1,6 +1,6 @@
 # Run Order
 
-JSON format for exchanging dog sport running orders between event software, photographers, and workflow tools such as [dogsport-photo-tools](https://github.com/johnnzz/dogsport-photo-tools).
+JSON format for exchanging dog sport running orders and event timeseries between event software, photographers, and workflow tools such as [dogsport-photo-tools](https://github.com/johnnzz/dogsport-photo-tools).
 
 This repository defines the canonical schema and example documents for the format.
 
@@ -10,9 +10,11 @@ A run order file is a single JSON object with three top-level fields:
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `schema_version` | string | Format version in semver form, currently `2.0.0` |
-| `event` | object | Event metadata (name, dates, optional org and venue details) |
-| `location` | object | Recursive tree of venue locations and timeseries entries |
+| `schema_version` | string | Format version, currently `"2.0.0"` |
+| `event` | object | Event metadata |
+| `entries` | array | Chronological log of timeseries records |
+
+Version 2.0.0 replaces the older nested `location` tree (1.x) with a flat, append-only `entries` array sorted by `at`.
 
 ### Event object
 
@@ -21,6 +23,8 @@ Required fields:
 | Field | Type | Example |
 | --- | --- | --- |
 | `name` | string | `"World Championships 2024"` |
+| `dogsportphoto_code` | string | `"1234"` (four digits) |
+| `org` | string | `"Dueling Dogs"` |
 | `start_date` | date string | `"2024-03-19"` |
 | `end_date` | date string | `"2024-03-21"` |
 
@@ -28,7 +32,6 @@ Optional fields:
 
 | Field | Type | Example |
 | --- | --- | --- |
-| `org` | string | `"Dueling Dogs"` |
 | `city` | string | `"Dubuque"` |
 | `state` | string | `"IA"` |
 | `club` | string | `"Kickass Disc Dogs"` |
@@ -36,126 +39,80 @@ Optional fields:
 | `org_type` | string | `"dock"` |
 | `sheet_timezone` | string | `"America/Los_Angeles"` |
 
-### Location tree
+The four-digit `dogsportphoto_code` matches the DogSportPhoto event code and appears in on-disk filenames such as `Summer_Splash-1234-ts.json`.
 
-The `location` object is a recursive map. Each key is either:
+### Entries
 
-1. **A nested location name** — value is another location object. Use names that match the venue (`pool1`, `ring2`, `Dock 1`, and so on).
-2. **A timestamp slot** — value is an array of run entries for that location at that time.
-
-Timestamp keys use this format:
-
-```text
-YYYY-MM-DD HH:MM:SS±HH:MM
-```
-
-Examples:
-
-- `2024-03-19 16:00:00-07:00`
-- `2024-03-19 16:05:13-07:00`
-
-The offset is a numeric timezone offset (`-07:00`, `+00:00`), not a named zone like `PDT`.
-
-An empty `location` object (`{}`) is valid for a newly created file with no entries yet.
-
-#### Location tree example
-
-```json
-{
-  "location": {
-    "pool1": {
-      "2024-03-19 16:00:00-07:00": [ /* entries in pool 1 */ ]
-    },
-    "2024-03-19 16:05:13-07:00": [ /* entries at the root location level */ ]
-  }
-}
-```
-
-In this example, `pool1` is a nested location. The timestamp at the root level schedules entries that are not under a named sub-location.
-
-### Run entry
-
-Each timestamp slot contains an array of run entry objects. Version 2.0.0 defines four entry types:
-
-#### Team check-in
-
-A handler-and-dog pair checked in at a location.
+Each entry is one chronological record with a shared envelope:
 
 | Field | Required | Type | Description |
 | --- | --- | --- | --- |
-| `dog` | yes | object | Dog identity (see below) |
-| `handler` | yes | string | Handler name |
-| `group` | no | string | Class, round, or group identifier |
-| `handler-email` | no | string | Handler email address |
-| `handler-phone` | no | string | Handler phone number |
-| `photo_request` | no | string | `"Yes"` or `"No"` |
-| `team` | no | string | Formatted handler-and-dog label for photo keywording |
-| `user_id` | no | uuid string | Registered handler user id when known |
+| `at` | yes | ISO 8601 date-time | When the entry was recorded |
+| `location` | yes | string | Location or lane name (`Dock 1`, `Dock 1 Lane 2`, `default`, etc.) |
+| `type` | yes | string | Entry type (see below) |
 
-#### Handler metadata
+Entry types:
 
-Handler information without a dog check-in (for example proxy check-ins).
+#### `team_check_in`
 
 | Field | Required | Type | Description |
 | --- | --- | --- | --- |
-| `handler` | yes | string | Handler name |
-| `group` | no | string | Class, round, or group identifier |
-| `handler-email` | no | string | Handler email address |
-| `handler-phone` | no | string | Handler phone number |
-| `photo_request` | no | string | `"Yes"` or `"No"` |
-| `user_id` | no | uuid string | Registered handler user id when known |
+| `handler` | yes | object | Handler identity (`name` required) |
+| `dog` | no | object | Dog identity (`name` required when present) |
+| `team` | no | object | Team label for photo keywording |
+| `event` | no | object | Attendance metadata (`photo_request`, `message_to_photographer`) |
 
-#### Photographer setup
+Handler, dog, and team objects may include a `dogsportphoto_code` when registered in DogSportPhoto.
 
-Photographer and camera registration at a location.
+#### `photographer_check_in`
 
 | Field | Required | Type | Description |
 | --- | --- | --- | --- |
-| `photographer` | yes | string | Photographer name |
-| `cameras` | yes | array | Cameras registered at this location |
+| `photographer` | yes | object | Photographer `name` and `cameras` array |
 
 Each camera object requires `model` and `serial` strings.
 
-#### Discipline selection
-
-The active discipline at a location.
+#### `set_discipline`
 
 | Field | Required | Type | Description |
 | --- | --- | --- | --- |
 | `discipline` | yes | string | Discipline name |
 
+### Handler object
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `name` | yes | string | Handler display name |
+| `dogsportphoto_code` | no | string | Registered handler entity code |
+| `email` | no | string | Handler email |
+| `phone` | no | string | Handler phone |
+
 ### Dog object
 
 | Field | Required | Type | Description |
 | --- | --- | --- | --- |
-| `call_name` | yes | string | Dog's call name |
+| `name` | yes | string | Dog call name |
+| `dogsportphoto_code` | no | string | Registered dog entity code |
 | `breed` | no | string | Dog breed |
 | `color` | no | string | Dog color |
-| `org_ids` | no | object | Map of org abbreviation → registration/entry number |
+| `org_ids` | no | object | Map of org slug → registration number |
 
-Organization abbreviations are short lowercase keys such as `akc`, `ddww`, or `aac`. Values are strings so leading zeros and alphanumeric IDs are preserved.
+### Attendance object (`event` on a team check-in)
 
-```json
-{
-  "call_name": "Sugar",
-  "breed": "Border Collie",
-  "color": "Black and White",
-  "org_ids": {
-    "akc": "1222",
-    "ddww": "432"
-  }
-}
-```
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `photo_request` | no | boolean | Whether the handler requested event photos |
+| `message_to_photographer` | no | string | One-line note to the photographer (max 200 chars) |
+
+An empty `entries` array (`[]`) is valid for a newly created file with no records yet.
 
 ## Examples
 
-This repository includes three example files:
-
 | File | Description |
 | --- | --- |
-| [`simple_example.json`](simple_example.json) | Minimal event with a single field and two timestamp slots |
-| [`dueling_example.json`](dueling_example.json) | Dueling Dogs world championship example with nested pool location, groups, and org IDs |
-| [`teams_app_example.json`](teams_app_example.json) | dogsport-photo-tools teams app entries: photographer setup, discipline selection, team check-in, and handler metadata |
+| [`simple_example.json`](simple_example.json) | Minimal event with two team check-ins |
+| [`dueling_example.json`](dueling_example.json) | Dueling Dogs example with org IDs |
+| [`teams_app_example.json`](teams_app_example.json) | Photographer setup, discipline selection, team check-in, and handler-only check-in |
 
 ### Minimal example
 
@@ -164,22 +121,23 @@ This repository includes three example files:
   "schema_version": "2.0.0",
   "event": {
     "name": "Kickass Disc Dogs",
+    "dogsportphoto_code": "1001",
     "org": "K9 Frisbee Worldwide League",
     "city": "Everett",
     "state": "WA",
     "start_date": "2024-03-19",
     "end_date": "2024-03-19"
   },
-  "location": {
-    "field": {
-      "2024-03-19 16:00:00-07:00": [
-        {
-          "dog": { "call_name": "Sugar" },
-          "handler": "Joe Smith"
-        }
-      ]
+  "entries": [
+    {
+      "at": "2024-03-19T16:00:00-07:00",
+      "location": "field",
+      "type": "team_check_in",
+      "handler": { "name": "Joe Smith" },
+      "dog": { "name": "Sugar" },
+      "team": { "name": "Joe Smith n Sugar" }
     }
-  }
+  ]
 }
 ```
 
@@ -191,7 +149,7 @@ Validate example files:
 
 ```bash
 pip install jsonschema
-python validate_examples.py
+python3 validate_examples.py
 ```
 
 Or validate any file with the [jsonschema](https://python-jsonschema.readthedocs.io/) CLI:
@@ -206,29 +164,19 @@ Online validators that support draft 2020-12 can also load the schema directly f
 https://raw.githubusercontent.com/johnnzz/run_order/main/run_order.schema.json
 ```
 
-## Working with location paths
-
-Tools that read or append runs typically address a slot using a dot-separated location path and a timestamp:
-
-| Location path | Timestamp | Meaning |
-| --- | --- | --- |
-| *(empty)* | `2024-03-19 16:05:13-07:00` | Root-level slot |
-| `pool1` | `2024-03-19 16:00:00-07:00` | Slot under `location.pool1` |
-| `ring2.masters` | `2024-03-20 09:30:00-07:00` | Nested location `ring2` → `masters` |
-
 ## Versioning
 
-The current schema version is **2.0.0**, used by dogsport-photo-tools. Older versions remain valid for legacy documents.
+The current schema version is **2.0.0**, used by dogsport-photo-tools. Older 1.x documents used a nested `location` tree keyed by timestamp strings instead of an `entries` array.
 
 | Version | Changes |
 | --- | --- |
-| **2.0.0** | Timeseries entry variants (team check-in, handler metadata, photographer setup, discipline selection); `end_date` required on event; optional event fields for club, venue, org type, and sheet timezone; dog `breed` and `color` fields |
-| **1.1.0** | Allow empty `location` objects |
-| **1.0.0** | Initial format |
+| **2.0.0** | Chronological `entries` log; structured handler/dog/team objects; `dogsportphoto_code` on event; entry types `team_check_in`, `photographer_check_in`, `set_discipline` |
+| **1.1.0** | Allow empty `location` objects (legacy tree format) |
+| **1.0.0** | Initial nested `location` tree format |
 
 Increment `schema_version` in documents when making incompatible format changes.
 
 ## Related tools
 
-- **dogsport-photo-tools** — consumes run order files to match photos to scheduled runs and store event check-ins
-- **run_order.py** — optional Python helper (available in git history) for create/read/append operations
+- **dogsport-photo-tools** — writes and reads 2.0.0 timeseries files for event check-ins and photo workflow
+- **run_order_timeseries.py** — shared helpers in dogsport-photo-tools for reading, writing, and migrating timeseries files
