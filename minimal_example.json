@@ -1,0 +1,16 @@
+{
+    "schema_version": "2.0.0",
+    "event": {
+        "name": "New Event"
+    },
+    "entries": [
+        {
+            "at": "2024-03-19T16:00:00-07:00",
+            "location": "field",
+            "type": "team_check_in",
+            "handler": {
+                "name": "Joe Smith"
+            }
+        }
+    ]
+}
