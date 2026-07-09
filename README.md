@@ -1,12 +1,22 @@
-# Run Order
+# Event Time-series Interchange File Format
 
-JSON format for exchanging dog sport running orders and event timeseries between event software, photographers, and workflow tools such as [dogsport-photo-tools](https://github.com/johnnzz/dogsport-photo-tools).
+Primarily designed to support dog sport events, the goal following JSON schema is to provide an interchange file format to allow scheduling programs to provide event photographers with the information to map photos to participants. 
+
+The format is intended to be simple to use and flexible, however it does require that only one participant be at a location at a time, and the data source must be able to track the participants within a couple of seconds. 
+
+This allows the format to be used for a wide variety of dog sports such as dock diving, disc, agility, but cannot support sports where many participants are on the field at the same time like racing.
+
+In some cases, this can be worked around by creating virtual locations.  For example, with Dueling Dogs, having a location for each lane: "Dock 1 - Lane 1", "Dock 1 - Lane 2" allows the scheme to function.  Potentially this workaround could be used for other sports as well.
+
+Ultimately the data provided will be used to allow individual photos to be mapped to participants, and infused with the various event and team metadata.
+
+In addition the time-series files will facilitate the ability of photographers to directly provide participants their specific files, avoiding the need to sift through volumes of unrelated photos.
 
 This repository defines the canonical schema and example documents for the format.
 
 ## Document structure
 
-A run order file is a single JSON object with three top-level fields:
+A time-series file is a single JSON object with three top-level fields:
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -36,7 +46,9 @@ Optional fields (used by the teams app when available):
 | `venue` | string | `"Evergreen State Fairgrounds"` |
 | `org_type` | string | `"dock"` |
 
-Unique, name-spaced entries in the format of `<application>_<field>` such as `dogsportphoto_code` may be added for application specific purposes.  
+Most fields here are optional, however the more data provided here the better as this will allow photos to be categorized by organization, venue, location, etc.
+
+Unique, name-spaced entries in the format of `<application>_<field>` such as `dogsportphoto_code` may be added for application specific purposes.  Applications not needing this information should ignore it.
 
 ### Entries
 
@@ -48,6 +60,10 @@ Each entry is one chronological record with a shared envelope:
 | `location` | yes | string | Location or lane name (`Dock 1`, `Dock 1 Lane 2`, `default`, etc.) |
 | `type` | yes | string | Entry type (see below) |
 
+Adherence to the time format including time-zone is important as different parts of the processing pipeline may be in different time-zones.  
+
+Accuracy of the timestamp should be within a couple of seconds (or at least smaller than the time between participants taking the field) and synced to a canonical time-source.
+
 #### Entry ordering
 
 Entries are a chronological log sorted by `at`. When a time-series file includes setup records for a location, write them before the first `team_check_in` for that location:
@@ -55,7 +71,9 @@ Entries are a chronological log sorted by `at`. When a time-series file includes
 - If the file uses discipline information, append a `set_discipline` entry before team check-ins at that location.
 - If the file uses photographer information, append a `photographer_check_in` entry before team check-ins at that location.
 
-`photographer_check_in` is normally written by a photographer-centric app such as the DogSportPhoto teams app. Third-party, handler-oriented time-series sources (for example run lists or registration exports) typically emit `team_check_in` entries only and do not include photographer setup records.
+`photographer_check_in` is normally written by a photographer-centric app such as the DogSportPhoto teams app. 
+
+It is not expected that scheduling applications that do not integrate photographers include `photographer_check_in`.
 
 Entry types:
 
@@ -129,6 +147,10 @@ A location may have many `set_discipline` entries over time. Consumers should tr
 
 ### Handler object
 
+While `email` and `phone` are optional fields, it is highly suggested they be provided, at least `email`.  These provide the mechanism that photographers can direct the participant to the resulting photos and without that information, it is likely the participant will not be connected with their photos.
+
+Duplicating the associated data such as `phone` and `email` is expected to provide ease of use, so if an `email` is to be provided for a participant, that `email` should be in all check ins.
+
 | Field | Required | Type | Description |
 | --- | --- | --- | --- |
 | `name` | yes | string | Handler display name |
@@ -138,7 +160,7 @@ A location may have many `set_discipline` entries over time. Consumers should tr
 
 ### Dog object
 
-While the dog entry is not strictly required, it is highly desirable.  It is not a required field since some tracking mechanisms such as QR codes make it impractical to track the specific dog.
+While the dog entry is not strictly required, it is highly desirable.  It is not a required field since some source mechanisms such as QR code based checkin tools make it impractical to track the specific dog.
 
 Information such as breed, color or organizational IDs can be provided if the information is available and can be useful to photographers to help identify dogs in the former cases, or to provide cross event tracking information in the case of the IDs.
 
@@ -218,13 +240,13 @@ https://raw.githubusercontent.com/johnnzz/run_order/main/run_order.schema.json
 
 ## Versioning
 
-The current schema version is **2.0.0**, used by dogsport-photo-tools. Older 1.x documents used a nested `location` tree keyed by timestamp strings instead of an `entries` array.
+The current schema version is **2.0.0**, used by dogsport-photo-tools. 
 
 | Version | Changes |
 | --- | --- |
 | **2.0.0** | Chronological `entries` log; structured handler/dog/team objects; optional event metadata used by the teams app; entry types `team_check_in`, `photographer_check_in`, `set_discipline` |
-| **1.1.0** | Allow empty `location` objects (legacy tree format) |
-| **1.0.0** | Initial nested `location` tree format |
+| **1.1.0** | deprecated |
+| **1.0.0** | deprecated |
 
 Increment `schema_version` in documents when making incompatible format changes.
 
