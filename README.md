@@ -187,6 +187,7 @@ An empty `entries` array (`[]`) is valid for a newly created file with no record
 | --- | --- |
 | [`minimal_example.json`](minimal_example.json) | Required fields only |
 | [`full_example.json`](full_example.json) | All optional event, entry, handler, dog, team, and attendance fields |
+| [`dockdiving_example.json`](dockdiving_example.json) | Dockdogs event with photographer check-in, team check-ins, and run entries |
 
 ### Minimal example
 
