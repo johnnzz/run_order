@@ -317,7 +317,8 @@
         "setDisciplineEntry": {
             "type": "object",
             "title": "Set discipline",
-            "description": "Records the active discipline or activity at a location. Should be written before team check-ins at that location when discipline metadata is used. The discipline value is user-defined; examples include Big Air, Speed Retrieve, Boom!, Jumpers, Expert, or Morning. Consumers should treat the latest set_discipline entry at a location as the current discipline.",
+            "description": "Records the active discipline or activity at a location. Should be written before team check-ins at that location when discipline metadata is used. The discipline value is user-defined; examples include Big Air, Speed Retrieve, Boom!, Jumpers or Standard. Consumers should treat the latest set_discipline entry at a location as the current discipline.",
+
             "required": [
                 "at",
                 "location",
