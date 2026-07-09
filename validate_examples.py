@@ -17,7 +17,14 @@ except ImportError:
 ROOT = Path(__file__).resolve().parent
 SCHEMA_PATH = ROOT / "run_order.schema.json"
 CURRENT_SCHEMA_VERSION = "2.0.0"
-EXAMPLE_PATHS = sorted(ROOT.glob("*_example.json"))
+EXAMPLE_GLOBS = ("*_example.json", "*-example.json")
+
+
+def example_paths() -> list[Path]:
+    paths: set[Path] = set()
+    for pattern in EXAMPLE_GLOBS:
+        paths.update(ROOT.glob(pattern))
+    return sorted(paths)
 
 
 def main() -> int:
@@ -25,7 +32,7 @@ def main() -> int:
     validator = Draft202012Validator(schema)
     failed = False
 
-    for example_path in EXAMPLE_PATHS:
+    for example_path in example_paths():
         document = json.loads(example_path.read_text(encoding="utf-8"))
         errors = sorted(validator.iter_errors(document), key=lambda err: list(err.path))
         if errors:
