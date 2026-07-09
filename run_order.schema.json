@@ -1,8 +1,8 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://github.com/johnnzz/run_order/run_order.schema.json",
-    "title": "Run Order Timeseries",
-    "description": "Schema for per-event timeseries JSON files used by the teams app. Version 2.0 uses a chronological entries log instead of timestamp-keyed location trees.",
+    "title": "Event Time-series Interchange File",
+    "description": "Interchange format for dog sport events. Scheduling and check-in applications provide a chronological log of who is at each location so event photographers can map photos to participants and infuse images with event and team metadata. The format assumes one participant at a location at a time and timestamps accurate to within a couple of seconds.",
     "type": "object",
     "required": [
         "schema_version",
@@ -13,13 +13,14 @@
     "properties": {
         "schema_version": {
             "const": "2.0.0",
-            "description": "Document format version."
+            "description": "Document format version. Current version is 2.0.0."
         },
         "event": {
             "$ref": "#/$defs/event"
         },
         "entries": {
             "type": "array",
+            "description": "Chronological log of timeseries records sorted by each entry's at timestamp. An empty array is valid for a newly created file. When setup records are present for a location, photographer_check_in and set_discipline entries should appear before the first team_check_in at that location.",
             "items": {
                 "$ref": "#/$defs/timeseriesEntry"
             }
@@ -28,6 +29,8 @@
     "$defs": {
         "event": {
             "type": "object",
+            "title": "Event metadata",
+            "description": "Metadata describing the trial or competition. Only name is required; additional fields help photographers categorize photos by organization, venue, location, and date.",
             "required": [
                 "name"
             ],
@@ -41,60 +44,64 @@
                 "dogsportphoto_code": {
                     "type": "string",
                     "pattern": "^\\d{4}$",
-                    "description": "Optional four-digit DogSportPhoto event code. Used by the teams app and in on-disk filenames when present."
+                    "description": "Optional namespaced application field (<application>_<field>). Four-digit DogSportPhoto event code used by the teams app and in on-disk filenames when present. Applications that do not use this field should ignore it."
                 },
                 "org": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Optional organization or sanctioning body. Used by the teams app when present."
+                    "description": "Optional organization or sanctioning body, such as DockDogs, Updog, or AKC."
                 },
                 "start_date": {
                     "type": "string",
                     "format": "date",
-                    "description": "Optional inclusive event start date. Used by the teams app when present."
+                    "description": "Optional inclusive event start date in YYYY-MM-DD form."
                 },
                 "end_date": {
                     "type": "string",
                     "format": "date",
-                    "description": "Optional inclusive event end date. Used by the teams app when present."
+                    "description": "Optional inclusive event end date in YYYY-MM-DD form."
                 },
                 "city": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "Optional city where the event is held."
                 },
                 "state": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "Optional state, province, or region for the event location."
                 },
                 "club": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Hosting club name."
+                    "description": "Optional hosting club name."
                 },
                 "venue": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Venue name."
+                    "description": "Optional venue or fairgrounds name."
                 },
                 "org_type": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Organization type, such as dock or dueling dogs."
+                    "description": "Optional organization type or sport family, such as dock, disc, or agility."
                 }
             }
         },
         "entryTimestamp": {
             "type": "string",
             "format": "date-time",
-            "description": "ISO 8601 timestamp for when the entry was recorded."
+            "description": "ISO 8601 date-time when the entry was recorded, including timezone offset. Accuracy should be within a couple of seconds and synced to a canonical time source so photos can be matched to the participant who was on the field."
         },
         "locationName": {
             "type": "string",
             "minLength": 1,
-            "description": "Location or lane name, such as Dock 1 or Dock 1 Lane 2."
+            "description": "Location, ring, pool, dock, lane, or arena name. Use virtual locations such as Dock 1 - Lane 1 and Dock 1 - Lane 2 when more than one participant may be active in the same physical area at once. Use default when no named location applies."
         },
         "handler": {
             "type": "object",
+            "title": "Handler",
+            "description": "Handler identity for a team check-in. Email is strongly recommended because it is the primary mechanism photographers use to connect participants with their photos.",
             "required": [
                 "name"
             ],
@@ -102,25 +109,30 @@
             "properties": {
                 "name": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "Handler display name."
                 },
                 "dogsportphoto_code": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Registered handler entity code."
+                    "description": "Optional namespaced application field. Registered handler entity code when known."
                 },
                 "email": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "Optional handler email. Strongly recommended and should be repeated on every check-in for the same participant when available."
                 },
                 "phone": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "Optional handler phone number."
                 }
             }
         },
         "dog": {
             "type": "object",
+            "title": "Dog",
+            "description": "Dog identity for a team check-in. Optional on the entry, but highly desirable. Omitted in some QR-based or proxy check-in flows where the specific dog cannot be tracked.",
             "required": [
                 "name"
             ],
@@ -128,32 +140,37 @@
             "properties": {
                 "name": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "Dog call name."
                 },
                 "dogsportphoto_code": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Registered dog entity code."
+                    "description": "Optional namespaced application field. Registered dog entity code when known."
                 },
                 "breed": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "Optional dog breed. Helps photographers identify dogs in images."
                 },
                 "color": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "Optional dog color. Helps photographers identify dogs in images."
                 },
                 "org_ids": {
                     "type": "object",
                     "additionalProperties": {
                         "type": "string"
                     },
-                    "description": "External organization identifiers keyed by org slug."
+                    "description": "Optional map of organization slug to registration or entry number, such as akc or ddww. Used for cross-event tracking and may be written to photo metadata as X-id-<org> keywords."
                 }
             }
         },
         "team": {
             "type": "object",
+            "title": "Team",
+            "description": "Formatted handler-and-dog label used for photo keywording.",
             "required": [
                 "name"
             ],
@@ -162,17 +179,19 @@
                 "name": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Formatted handler-and-dog label used for photo keywording."
+                    "description": "Team display label, commonly in the form Handler n Dog."
                 },
                 "dogsportphoto_code": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Registered team entity code."
+                    "description": "Optional namespaced application field. Registered team entity code when known."
                 }
             }
         },
         "attendance": {
             "type": "object",
+            "title": "Attendance",
+            "description": "Optional attendance metadata attached to a team check-in under the event property.",
             "additionalProperties": false,
             "properties": {
                 "photo_request": {
@@ -188,6 +207,8 @@
         },
         "camera": {
             "type": "object",
+            "title": "Camera",
+            "description": "Camera registered by a photographer at a location.",
             "required": [
                 "model",
                 "serial"
@@ -196,16 +217,20 @@
             "properties": {
                 "model": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "Camera model name."
                 },
                 "serial": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "Camera serial number. Used to correlate images to a photographer location check-in."
                 }
             }
         },
         "photographer": {
             "type": "object",
+            "title": "Photographer",
+            "description": "Photographer identity and cameras checked in at a location.",
             "required": [
                 "name",
                 "cameras"
@@ -214,10 +239,12 @@
             "properties": {
                 "name": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "Photographer display name."
                 },
                 "cameras": {
                     "type": "array",
+                    "description": "Cameras the photographer is using at this location.",
                     "items": {
                         "$ref": "#/$defs/camera"
                     }
@@ -226,6 +253,8 @@
         },
         "teamCheckInEntry": {
             "type": "object",
+            "title": "Team check-in",
+            "description": "Records a handler check-in, optionally with dog, team, and attendance details. Represents the participant who was on the field at the location at the recorded time.",
             "required": [
                 "at",
                 "location",
@@ -241,7 +270,8 @@
                     "$ref": "#/$defs/locationName"
                 },
                 "type": {
-                    "const": "team_check_in"
+                    "const": "team_check_in",
+                    "description": "Entry type discriminator for a participant check-in."
                 },
                 "handler": {
                     "$ref": "#/$defs/handler"
@@ -259,6 +289,8 @@
         },
         "photographerCheckInEntry": {
             "type": "object",
+            "title": "Photographer check-in",
+            "description": "Records a photographer and their cameras at a location. Normally written by photographer-centric applications such as the DogSportPhoto teams app before team check-ins begin. Scheduling applications that do not integrate photographers typically omit this entry type. Used to tie images to a location by correlating camera serial numbers with the photographer's checked-in location.",
             "required": [
                 "at",
                 "location",
@@ -274,7 +306,8 @@
                     "$ref": "#/$defs/locationName"
                 },
                 "type": {
-                    "const": "photographer_check_in"
+                    "const": "photographer_check_in",
+                    "description": "Entry type discriminator for photographer setup at a location."
                 },
                 "photographer": {
                     "$ref": "#/$defs/photographer"
@@ -284,7 +317,7 @@
         "setDisciplineEntry": {
             "type": "object",
             "title": "Set discipline",
-            "description": "Records the active discipline at a location. Written by the teams app when a photographer or assistant selects a discipline.",
+            "description": "Records the active discipline or activity at a location. Should be written before team check-ins at that location when discipline metadata is used. The discipline value is user-defined; examples include Big Air, Speed Retrieve, Boom!, Jumpers, Expert, or Morning. Consumers should treat the latest set_discipline entry at a location as the current discipline.",
             "required": [
                 "at",
                 "location",
@@ -300,17 +333,19 @@
                     "$ref": "#/$defs/locationName"
                 },
                 "type": {
-                    "const": "set_discipline"
+                    "const": "set_discipline",
+                    "description": "Entry type discriminator for discipline or activity selection."
                 },
                 "discipline": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Discipline name, such as Distance Jump or Speed Retrieve."
+                    "description": "Discipline, game, class, or activity name for the location at this time, such as Distance Jump, Big Air, Boom!, or Jumpers."
                 }
             }
         },
         "timeseriesEntry": {
-            "description": "A single chronological timeseries record.",
+            "title": "Timeseries entry",
+            "description": "One chronological record in the entries log. Valid types are team_check_in, photographer_check_in, and set_discipline.",
             "oneOf": [
                 {
                     "$ref": "#/$defs/teamCheckInEntry"
