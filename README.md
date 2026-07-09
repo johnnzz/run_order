@@ -14,8 +14,6 @@ A run order file is a single JSON object with three top-level fields:
 | `event` | object | Event metadata |
 | `entries` | array | Chronological log of timeseries records |
 
-Version 2.0.0 replaces the older nested `location` tree (1.x) with a flat, append-only `entries` array sorted by `at`.
-
 ### Event object
 
 Required fields:
@@ -38,7 +36,7 @@ Optional fields (used by the teams app when available):
 | `venue` | string | `"Evergreen State Fairgrounds"` |
 | `org_type` | string | `"dock"` |
 
-When present, the four-digit `dogsportphoto_code` matches the DogSportPhoto event code and appears in on-disk filenames such as `Summer_Splash-1234-ts.json`. Timeseries files do not carry sheet timezone settings; those live in event app configuration instead.
+Unique, name-spaced entries in the format of `<application>_<field>` such as `dogsportphoto_code` may be added for application specific purposes.  
 
 ### Entries
 
@@ -52,12 +50,12 @@ Each entry is one chronological record with a shared envelope:
 
 #### Entry ordering
 
-Entries are a chronological log sorted by `at`. When a timeseries file includes setup records for a location, write them before the first `team_check_in` for that location:
+Entries are a chronological log sorted by `at`. When a time-series file includes setup records for a location, write them before the first `team_check_in` for that location:
 
 - If the file uses discipline information, append a `set_discipline` entry before team check-ins at that location.
 - If the file uses photographer information, append a `photographer_check_in` entry before team check-ins at that location.
 
-`photographer_check_in` is normally written by a photographer-centric app such as the DogSportPhoto teams app. Third-party, handler-oriented timeseries sources (for example run lists or registration exports) typically emit `team_check_in` entries only and do not include photographer setup records.
+`photographer_check_in` is normally written by a photographer-centric app such as the DogSportPhoto teams app. Third-party, handler-oriented time-series sources (for example run lists or registration exports) typically emit `team_check_in` entries only and do not include photographer setup records.
 
 Entry types:
 
@@ -76,7 +74,11 @@ Handler, dog, and team objects may include a `dogsportphoto_code` when registere
 
 #### `photographer_check_in`
 
-Records a photographer and their cameras at a location.
+Records a photographer and their cameras at a location.  
+
+Photographer check in entries are typically provided by photography specific applications and can be used to tie the a given image back to the location it was taken by correlating image to photographer (via the camera serial number) to where the photographer was at that time based on their check in and thus back to the dog.
+
+This type of arrangement is only necessary when there are multiple locations (fields, docks, rings, arenas) and this allows coordinated coverage by multiple photographers across the various locations. 
 
 | Field | Required | Type | Description |
 | --- | --- | --- | --- |
@@ -86,7 +88,27 @@ Each camera object requires `model` and `serial` strings.
 
 #### `set_discipline`
 
-Records the active discipline at a location. The teams app writes this when a photographer or assistant selects a discipline for a shoot location.
+Records the active discipline or activity at a location.  
+
+When used, a set_discipline entry should be made before any team check ins, so the discipline of the subsequent check ins is known.
+
+The goal of the discipline is provide additional descriptive organization information to categorize images that will be added to the image as metadata for later use.
+
+The discipline value is user defined, but it is recommended to follow the concepts of the event organization. 
+
+For example, Dockdogs has disciplines of "Big Air", "Extreme Vertical", "Speed Retrieve" and "Dueling Dogs".  
+
+Updog has games like "Time Warp", "ThrowNGo", "Spaced Out", "4WayPlay", "Far Out", "Greedy", "Boom!", "Fireball" and "Freestyle".  
+
+In agility this could be something like "Jumpers" vs "Standard".
+
+These all provide meaningful organizational information.  
+
+In cases where there aren't meaningful differences in the activity being performed, it could reflect skill categories ("Expert", "Novice") or broad time categories ("Morning", "Evening") or some combination of the above.
+
+That said discipline is only useful if it is something that is happening at an location (ring, pool, arena) at a given time-frame.  
+
+A discipline is not strictly necessary, but highly desirable.
 
 | Field | Required | Type | Description |
 | --- | --- | --- | --- |
@@ -103,7 +125,7 @@ Example:
 }
 ```
 
-A location may have many `set_discipline` entries over time. Consumers should treat the latest entry at a location as the current discipline unless they have another source of truth.
+A location may have many `set_discipline` entries over time. Consumers should treat the latest entry at a location as the current discipline.
 
 ### Handler object
 
@@ -115,6 +137,10 @@ A location may have many `set_discipline` entries over time. Consumers should tr
 | `phone` | no | string | Handler phone |
 
 ### Dog object
+
+While the dog entry is not strictly required, it is highly desirable.  It is not a required field since some tracking mechanisms such as QR codes make it impractical to track the specific dog.
+
+Information such as breed, color or organizational IDs can be provided if the information is available and can be useful to photographers to help identify dogs in the former cases, or to provide cross event tracking information in the case of the IDs.
 
 | Field | Required | Type | Description |
 | --- | --- | --- | --- |
