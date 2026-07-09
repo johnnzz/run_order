@@ -98,6 +98,8 @@ Photographer check in entries are typically provided by photography specific app
 
 This type of arrangement is only necessary when there are multiple locations (fields, docks, rings, arenas) and this allows coordinated coverage by multiple photographers across the various locations. 
 
+Because this file format is standarized, the team checkin entries can be produced with one application, the photographer checkins in another, and the files merged.
+
 | Field | Required | Type | Description |
 | --- | --- | --- | --- |
 | `photographer` | yes | object | Photographer `name` and `cameras` array |
