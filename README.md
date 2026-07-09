@@ -223,8 +223,14 @@ The machine-readable schema is [`run_order.schema.json`](run_order.schema.json) 
 Validate example files:
 
 ```bash
-pip install jsonschema
-python3 validate_examples.py
+pip install -r requirements.txt
+./validate.py
+```
+
+Validate a specific file:
+
+```bash
+./validate.py --file=my_run_order.json
 ```
 
 Or validate any file with the [jsonschema](https://python-jsonschema.readthedocs.io/) CLI:
