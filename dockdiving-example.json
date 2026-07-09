@@ -1,0 +1,225 @@
+{
+    "schema_version": "2.0.0",
+    "event": {
+        "name": "Maple Valley Days",
+        "start_date": "2026-06-14",
+        "org": "Dockdogs",
+        "dogsportphoto_code": "2137",
+        "end_date": "2026-06-14",
+        "city": "Maple Valley",
+        "state": "WA",
+        "org_type": "dock"
+    },
+    "entries": [
+        {
+            "type": "photographer_check_in",
+            "photographer": {
+                "name": "John Navitsky",
+                "cameras": [
+                    {
+                        "model": "NIKON Z 8",
+                        "serial": "3000000"
+                    },
+                    {
+                        "model": "NIKON Z 9",
+                        "serial": "3001111"
+                    }
+                ]
+            },
+            "at": "2026-07-09T03:14:05+00:00",
+            "location": "Dock 1"
+        },
+        {
+            "type": "photographer_check_in",
+            "photographer": {
+                "name": "Joe Photog",
+                "cameras": [
+                    {
+                        "model": "Sony A9II",
+                        "serial": "777111"
+                    }
+                ]
+            },
+            "at": "2026-07-09T03:20:00+00:00",
+            "location": "Dock 2 - Lane 1"
+        },
+        {
+            "type": "set_discipline",
+            "discipline": "Big Air",
+            "at": "2026-07-09T03:25:06+00:00",
+            "location": "Dock 1"
+        },
+        {
+            "type": "set_discipline",
+            "discipline": "Dueling Dogs",
+            "at": "2026-07-09T03:30:24+00:00",
+            "location": "Dock 2 - Lane 1"
+        },
+        {
+            "type": "set_discipline",
+            "discipline": "Dueling Dogs",
+            "at": "2026-07-09T03:30:24+00:00",
+            "location": "Dock 2 - Lane 2"
+        },
+        {
+            "type": "team_check_in",
+            "handler": {
+                "name": "Becky Ziegler",
+                "dogsportphoto_code": "20422",
+                "email": "becky@someemail.com"
+            },
+            "dog": {
+                "name": "Heathen",
+                "dogsportphoto_code": "81606",
+                "breed": "Border Whippet",
+                "color": "Red Brindle"
+            },
+            "team": {
+                "name": "Becky Ziegler n Heathen (58670)",
+                "dogsportphoto_code": "58670"
+            },
+            "at": "2026-07-09T03:35:20+00:00",
+            "location": "Dock 2 - Lane 1"
+        },
+        {
+            "type": "team_check_in",
+            "handler": {
+                "name": "Laurel Behnke",
+                "dogsportphoto_code": "61995",
+                "email": "laurel@someemail.com"
+            },
+            "dog": {
+                "name": "Sounders",
+                "dogsportphoto_code": "19141",
+                "breed": "Whippet",
+                "color": "Red brindle and white"
+            },
+            "team": {
+                "name": "Laurel Behnke n Sounders (46280)",
+                "dogsportphoto_code": "46280"
+            },
+            "at": "2026-07-09T03:35:22+00:00",
+            "location": "Dock 2 - Lane 2"
+        },
+        {
+            "type": "team_check_in",
+            "handler": {
+                "name": "Leslie Lane",
+                "dogsportphoto_code": "85913",
+                "email": "leslie@someemail.com"
+            },
+            "dog": {
+                "name": "Fig",
+                "dogsportphoto_code": "30382",
+                "breed": "Red heeler mix",
+                "color": "Red/White speckled"
+            },
+            "team": {
+                "name": "Leslie Lane n Fig (10262)",
+                "dogsportphoto_code": "10262"
+            },
+            "at": "2026-07-09T03:35:59+00:00",
+            "location": "Dock 2 - Lane 1"
+        },
+        {
+            "type": "team_check_in",
+            "handler": {
+                "name": "John Navitsky",
+                "dogsportphoto_code": "87980",
+                "email": "john@navitsky.org"
+            },
+            "dog": {
+                "name": "Daisy",
+                "dogsportphoto_code": "93227",
+                "breed": "lab",
+                "color": "black"
+            },
+            "team": {
+                "name": "John Navitsky n Daisy (86056)",
+                "dogsportphoto_code": "86056"
+            },
+            "at": "2026-07-09T03:36:01+00:00",
+            "location": "Dock 2 - Lane 2"
+        },
+        {
+            "type": "team_check_in",
+            "handler": {
+                "name": "Becky Ziegler",
+                "dogsportphoto_code": "20422",
+                "email": "becky@someemail.com"
+            },
+            "dog": {
+                "name": "Heathen",
+                "dogsportphoto_code": "81606",
+                "breed": "Border Whippet",
+                "color": "Red Brindle"
+            },
+            "team": {
+                "name": "Becky Ziegler n Heathen (58670)",
+                "dogsportphoto_code": "58670"
+            },
+            "at": "2026-07-09T03:36:51+00:00",
+            "location": "Dock 2 - Lane 1"
+        },
+        {
+            "type": "team_check_in",
+            "handler": {
+                "name": "Becky Ziegler",
+                "dogsportphoto_code": "20422",
+                "email": "becky@someemail.com"
+            },
+            "dog": {
+                "name": "Heathen",
+                "dogsportphoto_code": "81606",
+                "breed": "Border Whippet",
+                "color": "Red Brindle"
+            },
+            "team": {
+                "name": "Becky Ziegler n Heathen (58670)",
+                "dogsportphoto_code": "58670"
+            },
+            "at": "2026-07-09T03:36:53+00:00",
+            "location": "Dock 2 - Lane 2"
+        },
+        {
+            "type": "team_check_in",
+            "handler": {
+                "name": "Leslie Lane",
+                "dogsportphoto_code": "85913",
+                "email": "leslie@someemail.com"
+            },
+            "dog": {
+                "name": "Fig",
+                "dogsportphoto_code": "30382",
+                "breed": "Red heeler mix",
+                "color": "Red/White speckled"
+            },
+            "team": {
+                "name": "Leslie Lane n Fig (10262)",
+                "dogsportphoto_code": "10262"
+            },
+            "at": "2026-07-09T03:37:03+00:00",
+            "location": "Dock 2 - Lane 1"
+        },
+        {
+            "type": "team_check_in",
+            "handler": {
+                "name": "Laurel Behnke",
+                "dogsportphoto_code": "61995",
+                "email": "laurel@someemail.com"
+            },
+            "dog": {
+                "name": "Sounders",
+                "dogsportphoto_code": "19141",
+                "breed": "Whippet",
+                "color": "Red brindle and white"
+            },
+            "team": {
+                "name": "Laurel Behnke n Sounders (46280)",
+                "dogsportphoto_code": "46280"
+            },
+            "at": "2026-07-09T03:37:04+00:00",
+            "location": "Dock 2 - Lane 2"
+        }
+    ]
+}
