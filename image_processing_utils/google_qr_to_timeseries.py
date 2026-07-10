@@ -45,7 +45,7 @@ from a published sheet URL and writes a schema 2.0 time-series file for
 process_queue.py to consume. No Google API credentials required.
 
 Usage:
-  google_to_timeseries.py [options] <sheet_url>
+  google_qr_to_timeseries.py [options] <sheet_url>
 
 Options:
   --timezone TZ            IANA timezone for naive Log timestamps [default: America/New_York]

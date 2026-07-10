@@ -265,7 +265,7 @@ Offline photo workflow scripts live in [`image_processing_utils/`](image_process
 
 | Script | Purpose |
 | --- | --- |
-| `google_to_timeseries.py` | Build a timeseries JSON file from a Google Sheet |
+| `google_qr_to_timeseries.py` | Build a timeseries JSON file from a Google Sheet |
 | `process_queue.py` | Match queued photos to check-ins and write EXIF/IPTC metadata |
 | `stage_into_dirs.py` | Stage tagged photos into team folders and write `clients.csv` |
 | `summarize_dir.py` | Print a human-readable EXIF summary |

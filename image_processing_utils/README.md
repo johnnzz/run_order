@@ -4,7 +4,7 @@ Standalone command-line tools for building run-order timeseries data, tagging ev
 
 | Script | Summary |
 |--------|---------|
-| `google_to_timeseries.py` | Build a run_order timeseries JSON file from a Google Sheet |
+| `google_qr_to_timeseries.py` | Build a run_order timeseries JSON file from a Google Sheet |
 | `process_queue.py` | Match queued event photos to run-order check-ins and write EXIF keywords |
 | `stage_into_dirs.py` | Stage tagged photos into team folders for publish and gallery delivery |
 | `summarize_dir.py` | Print a human-readable EXIF summary of images in a directory tree |
@@ -12,7 +12,7 @@ Standalone command-line tools for building run-order timeseries data, tagging ev
 Typical end-to-end workflow:
 
 ```text
-google_to_timeseries.py <sheet_url>  →  event-ts.json
+google_qr_to_timeseries.py <sheet_url>  →  event-ts.json
         ↓
 process_queue.py --process           →  processed/ (tagged EXIF)
         ↓
@@ -72,7 +72,7 @@ Each script documents which helper modules it imports. Copy these files together
 | Script | Copy with |
 |--------|-----------|
 | `process_queue.py` | `_run_order_timeseries.py` |
-| `google_to_timeseries.py` | `_run_order_timeseries.py` |
+| `google_qr_to_timeseries.py` | `_run_order_timeseries.py` |
 | `stage_into_dirs.py` | `_run_order_timeseries.py` |
 | `summarize_dir.py` | *(none — standalone)* |
 
@@ -91,20 +91,20 @@ Internal [run_order](https://github.com/johnnzz/run_order) timeseries library (n
 - Extract handler, dog, team, email, photo request, cameras, discipline, and location fields
 - `team_display_name()` — synthesizes `"<handler> n <dog>"` when team is missing
 
-Used by `process_queue.py`, `google_to_timeseries.py`, and `stage_into_dirs.py`.
+Used by `process_queue.py`, `google_qr_to_timeseries.py`, and `stage_into_dirs.py`.
 
 `process_queue.py --timeline2` merges a secondary timeseries into the primary inline (primary wins on conflicts; secondary fills gaps).
 
 ---
 
-## google_to_timeseries.py
+## google_qr_to_timeseries.py
 
 Build a run_order timeseries JSON file from a Google Sheet.
 
 First step in the offline workflow: fetches Setup, Event, Roster, and Log tabs from a published sheet URL and writes a schema 2.0 timeseries file for `process_queue.py` to consume. No Google API credentials required.
 
 ```text
-google_to_timeseries.py [options] <sheet_url>
+google_qr_to_timeseries.py [options] <sheet_url>
 ```
 
 | Option | Default | Description |
@@ -134,11 +134,11 @@ Writes a v2 timeseries file with `schema_version`, `event` metadata (including `
 ### Examples
 
 ```bash
-google_to_timeseries.py "https://docs.google.com/spreadsheets/d/ABC123/edit"
+google_qr_to_timeseries.py "https://docs.google.com/spreadsheets/d/ABC123/edit"
 ```
 
 ```bash
-google_to_timeseries.py --timezone America/Los_Angeles \
+google_qr_to_timeseries.py --timezone America/Los_Angeles \
   --file "Summer Splash 2026-ts.json" \
   "https://docs.google.com/spreadsheets/d/ABC123/edit"
 ```
@@ -434,7 +434,7 @@ summarize_dir.py ./publish
 | File | Role |
 |------|------|
 | `README.md` | This document |
-| `google_to_timeseries.py` | Google Sheet → timeseries JSON |
+| `google_qr_to_timeseries.py` | Google Sheet → timeseries JSON |
 | `process_queue.py` | Queue → tagged processed photos |
 | `stage_into_dirs.py` | Processed → publish folders + `clients.csv` |
 | `summarize_dir.py` | Directory EXIF summary |

@@ -7,7 +7,7 @@ Used by:
   - process_queue.py — load/migrate timeseries, index entries for photo matching
     (handler, dog, team, photographer, discipline)
   - stage_into_dirs.py — handler emails from team_check_in entries
-  - google_to_timeseries.py — build v2 timeseries from Google Sheets
+  - google_qr_to_timeseries.py — build v2 timeseries from Google Sheets
 
 Not imported by summarize_dir.py.
 
