@@ -1,0 +1,6 @@
+# Local script logs
+image_processing_utils/*.log
+
+# Python
+__pycache__/
+*.py[cod]

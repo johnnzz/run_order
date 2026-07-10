@@ -259,7 +259,20 @@ The current schema version is **2.0.0**, used by dogsport-photo-tools.
 
 Increment `schema_version` in documents when making incompatible format changes.
 
+## Image processing utilities
+
+Offline photo workflow scripts live in [`image_processing_utils/`](image_processing_utils/README.md):
+
+| Script | Purpose |
+| --- | --- |
+| `google_to_timeseries.py` | Build a timeseries JSON file from a Google Sheet |
+| `process_queue.py` | Match queued photos to check-ins and write EXIF/IPTC metadata |
+| `stage_into_dirs.py` | Stage tagged photos into team folders and write `clients.csv` |
+| `summarize_dir.py` | Print a human-readable EXIF summary |
+
+The [dogsport-photo-tools](https://github.com/johnnzz/dogsport-photo-tools) webapp imports `_run_order_timeseries.py` from this directory for live check-ins and server-side processing. Set `RUN_ORDER_REPO_ROOT` on the server if the checkout is not at `../run_order` beside dogsport-photo-tools.
+
 ## Related tools
 
 - **dogsport-photo-tools** — writes and reads 2.0.0 timeseries files for event check-ins and photo workflow
-- **run_order_timeseries.py** — shared helpers in dogsport-photo-tools for reading, writing, and migrating timeseries files
+- **`image_processing_utils/_run_order_timeseries.py`** — shared timeseries helpers imported by the CLI scripts and webapp backend
