@@ -1,3 +1,7 @@
+# Copyright (c) 2026 John Navitsky
+#
+# SPDX-License-Identifier: MIT
+# See LICENSE for the full license text.
 """Internal shared run_order timeseries helpers for schema version 2.0.0.
 
 Not run directly — import as _run_order_timeseries. The leading underscore marks

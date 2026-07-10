@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 John Navitsky
+#
+# SPDX-License-Identifier: MIT
+# See LICENSE for the full license text.
 """Validate run order JSON files against run_order.schema.json.
 
 Usage:

@@ -1,4 +1,8 @@
 #!/usr/bin/python3
+# Copyright (c) 2026 John Navitsky
+#
+# SPDX-License-Identifier: MIT
+# See LICENSE for the full license text.
 """Match queued event photos to run-order check-ins and write EXIF keywords.
 
 Processes photos present in a queue directory against a time-series file (or two)

@@ -1,4 +1,5 @@
 {
+    "$comment": "Copyright (c) 2026 John Navitsky. SPDX-License-Identifier: MIT",
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://github.com/johnnzz/run_order/run_order.schema.json",
     "title": "Event Time-series Interchange File",
