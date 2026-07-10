@@ -1,4 +1,8 @@
 #!/usr/bin/python3
+# Copyright (c) 2026 John Navitsky
+#
+# SPDX-License-Identifier: MIT
+# See LICENSE for the full license text.
 """
 Stage tagged photos into team folders for publish and gallery delivery.
 

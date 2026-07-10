@@ -1,5 +1,7 @@
 # Image processing utilities
 
+Copyright (c) 2026 John Navitsky. Released under the [MIT License](LICENSE).
+
 Standalone command-line tools for building run-order timeseries data, tagging event photos with EXIF keywords, staging output for publish, and inspecting image metadata. Copy a script plus any listed helper modules from this directory to run elsewhere.
 
 | Script | Summary |
