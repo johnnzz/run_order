@@ -2,7 +2,7 @@
 
 Copyright (c) 2026 John Navitsky. Released under the [MIT License](LICENSE).
 
-Primarily designed to support dog sport events, the goal following JSON schema is to provide an interchange file format to allow scheduling programs to provide event photographers with the information to map photos to participants. 
+Primarily designed to support dog sport events, the goal following file format is to provide a free, open and hopefully ubiquitous interchange file format to allow event scheduling programs to provide event photographers with the information to map photos to participants.
 
 The format is intended to be simple to use and flexible, however it does require that only one participant be at a location at a time, and the data source must be able to track the participants within a couple of seconds. 
 
