@@ -1423,6 +1423,7 @@ def load_time_series(path, merge_path=None):
 		"event_dogsportphoto_code": _optional_event_metadata_value(event, "dogsportphoto_code"),
 		"event_city": _optional_event_metadata_value(event, "city"),
 		"event_state": _optional_event_metadata_value(event, "state"),
+		"event_mode_checkin": _optional_event_metadata_value(event, "event_mode_checkin"),
 		"event_timezone": timezone.utc,
 		"sheet_timezone_name": event.get("sheet_timezone"),
 		"sheet_timezone": sheet_timezone_from_event(event),
@@ -1506,6 +1507,22 @@ def resolve_photographer_location(image_time, camera_serial, photographer_entrie
 def _check_in_instant(entry, sheet_tz=None):
 	return comparison_instant(entry["time"], naive_tz=sheet_tz)
 
+def event_mode_checkin_from_time_series(time_series):
+	mode = time_series.get("event_mode_checkin")
+	if isinstance(mode, str) and mode.strip():
+		return mode.strip()
+	return None
+
+def sequential_check_in_matching_enabled(time_series, *, lead):
+	"""Runlist burst matching is for pre-logged batches; QR/Self use timestamp matching."""
+	mode = event_mode_checkin_from_time_series(time_series)
+	if mode == "Runlist":
+		return True
+	if mode in {"QRmode", "Self"}:
+		return False
+	# Legacy timeseries without mode: only when a lead check-in precedes a batch cluster.
+	return lead is not None
+
 def _split_runlist_lead_and_batch(entries, sheet_tz=None):
 	if not entries:
 		return None, []
@@ -1587,6 +1604,8 @@ def build_sequential_check_in_assignments(queue_entries, time_series):
 		entries = time_series["check_ins_by_location"].get(location_path, [])
 		lead, batch = _split_runlist_lead_and_batch(entries, sheet_tz=sheet_tz)
 		if len(batch) < 2:
+			continue
+		if not sequential_check_in_matching_enabled(time_series, lead=lead):
 			continue
 
 		sorted_photos = sorted(photos, key=lambda item: item[1]["image_time"])
