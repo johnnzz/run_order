@@ -1969,7 +1969,7 @@ def assign_original_filename_keyword(image_json, original_filename):
 		image_json["log"].append("add original filename keyword")
 		logger.info(" ** Original filename: %s", ofn_keyword)
 
-PHOTO_SUMMARY_SCHEMA_VERSION = "1.0.0"
+PHOTO_SUMMARY_SCHEMA_VERSION = "1.1.0"
 
 
 def sanitize_event_name_for_filename(name):
@@ -2010,6 +2010,9 @@ def build_photo_summary_entry(queue_file, image_json, match):
 	return {
 		"image": os.path.basename(queue_file),
 		"timestamp": photo_summary_timestamp(image_json.get("image_time")),
+		"photographer": match.get("photographer") if match else None,
+		"location": match.get("location") if match else None,
+		"discipline": match.get("discipline") if match else None,
 		"handler": match.get("handler") if match else None,
 		"dog": match.get("dog") if match else None,
 	}
