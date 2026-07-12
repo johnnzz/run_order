@@ -518,7 +518,9 @@ def format_keyword(field, value):
 	if value is None:
 		return None
 	text = str(value).strip()
-	if not text or text.lower() in {"none", "unspecified"}:
+	if not text:
+		return None
+	if text.lower() in {"none", "unspecified"} and field != "handler":
 		return None
 	if field == "dog":
 		text = normalize_quoted_dog_name(text)
@@ -1584,6 +1586,29 @@ def _photos_overlap_runlist_batch(bursts, lead, batch, sheet_tz=None):
 	window_end = sequence_end + grace
 	return first_photo <= window_end and last_photo >= window_start
 
+def _burst_representative_instant(burst):
+	times = [comparison_instant(item[1]["image_time"]) for item in burst]
+	return times[len(times) // 2]
+
+def _pick_runlist_check_in_for_burst(burst, runlist_sequence, used_indices, sheet_tz):
+	burst_time = _burst_representative_instant(burst)
+
+	def entry_instant(index):
+		return _check_in_instant(runlist_sequence[index], sheet_tz)
+
+	unused = [index for index in range(len(runlist_sequence)) if index not in used_indices]
+	if not unused:
+		return None
+
+	at_or_before = [
+		index for index in unused
+		if entry_instant(index) <= burst_time
+	]
+	if at_or_before:
+		return max(at_or_before, key=lambda index: (entry_instant(index), index))
+
+	return min(unused, key=lambda index: (entry_instant(index), index))
+
 def build_sequential_check_in_assignments(queue_entries, time_series):
 	sheet_tz = sheet_timezone_from_time_series(time_series)
 	event_tz = event_timezone_from_time_series(time_series)
@@ -1622,12 +1647,28 @@ def build_sequential_check_in_assignments(queue_entries, time_series):
 			continue
 
 		runlist_sequence = ([lead] if lead is not None else []) + batch
-		for index, burst in enumerate(bursts):
-			if index >= len(runlist_sequence):
-				break
-			check_in = runlist_sequence[index]
-			for queue_file, _image_json in burst:
-				assignments[queue_file] = check_in
+		if len(runlist_sequence) > len(bursts):
+			used_indices = set()
+			for burst in bursts:
+				pick = _pick_runlist_check_in_for_burst(
+					burst,
+					runlist_sequence,
+					used_indices,
+					sheet_tz=sheet_tz,
+				)
+				if pick is None:
+					break
+				used_indices.add(pick)
+				check_in = runlist_sequence[pick]
+				for queue_file, _image_json in burst:
+					assignments[queue_file] = check_in
+		else:
+			for index, burst in enumerate(bursts):
+				if index >= len(runlist_sequence):
+					break
+				check_in = runlist_sequence[index]
+				for queue_file, _image_json in burst:
+					assignments[queue_file] = check_in
 
 	time_series["sequential_check_in_by_queue_file"] = assignments
 	return assignments
