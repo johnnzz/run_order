@@ -140,6 +140,10 @@ DOCK_LANE_PATTERN = re.compile(r"^Dock\s+(.+?)\s+-\s+Lane\s+(\d+)$", re.IGNORECA
 DUELING_DOGS_DISCIPLINE = "dueling dogs"
 # Small grace for discipline selection when camera clock and check-in clocks differ slightly.
 CHECK_IN_GRACE_SECONDS = 120
+# Photos within this gap are treated as one run/burst (typically 2 frames).
+PHOTO_BURST_GAP_SECONDS = 3
+# Check-ins separated by more than this are a pre-batch lead vs a runlist batch cluster.
+CHECK_IN_BATCH_GAP_SECONDS = 120
 
 # Naive timestamps without an offset (Google Sheets export, EXIF without zone suffix) are
 # interpreted in this timezone. Camera and sheet are Pacific; matching uses UTC instants.
@@ -825,6 +829,7 @@ def build_sequence_ids(queue_entries, time_series):
 			_image_json["image_time"],
 			_image_json.get("camera_serial"),
 			time_series,
+			queue_file=queue_file,
 		)
 		key = sequence_group_key(match, _image_json["image_time"], time_series)
 		if key != current_key:
@@ -1498,6 +1503,110 @@ def resolve_photographer_location(image_time, camera_serial, photographer_entrie
 		return None
 	return entry["location_path"]
 
+def _check_in_instant(entry, sheet_tz=None):
+	return comparison_instant(entry["time"], naive_tz=sheet_tz)
+
+def _split_runlist_lead_and_batch(entries, sheet_tz=None):
+	if not entries:
+		return None, []
+
+	batch_start = len(entries)
+	for index in range(len(entries) - 1, 0, -1):
+		gap = (
+			_check_in_instant(entries[index], sheet_tz)
+			- _check_in_instant(entries[index - 1], sheet_tz)
+		).total_seconds()
+		if gap > CHECK_IN_BATCH_GAP_SECONDS:
+			batch_start = index
+			break
+	else:
+		batch_start = 0
+
+	batch = entries[batch_start:]
+	if len(batch) < 2:
+		return None, entries
+
+	if batch_start == 0:
+		return None, batch
+
+	return entries[batch_start - 1], batch
+
+def _group_photo_bursts(sorted_items):
+	if not sorted_items:
+		return []
+
+	bursts = [[sorted_items[0]]]
+	for item in sorted_items[1:]:
+		prev_time = comparison_instant(bursts[-1][-1][1]["image_time"])
+		this_time = comparison_instant(item[1]["image_time"])
+		if (this_time - prev_time).total_seconds() <= PHOTO_BURST_GAP_SECONDS:
+			bursts[-1].append(item)
+		else:
+			bursts.append([item])
+	return bursts
+
+def _photos_overlap_runlist_batch(bursts, lead, batch, sheet_tz=None):
+	if not bursts or not batch:
+		return False
+
+	first_photo = comparison_instant(bursts[0][0][1]["image_time"])
+	last_photo = comparison_instant(bursts[-1][-1][1]["image_time"])
+	grace = timedelta(seconds=CHECK_IN_GRACE_SECONDS)
+	if lead is not None:
+		sequence_start = _check_in_instant(lead, sheet_tz)
+	else:
+		sequence_start = _check_in_instant(batch[0], sheet_tz)
+	sequence_end = _check_in_instant(batch[-1], sheet_tz)
+	window_start = sequence_start - grace
+	window_end = sequence_end + grace
+	return first_photo <= window_end and last_photo >= window_start
+
+def build_sequential_check_in_assignments(queue_entries, time_series):
+	sheet_tz = sheet_timezone_from_time_series(time_series)
+	event_tz = event_timezone_from_time_series(time_series)
+	assignments = {}
+	photos_by_location = {}
+
+	for queue_file, image_json in queue_entries:
+		photographer_entry = resolve_photographer_entry(
+			image_json["image_time"],
+			image_json.get("camera_serial"),
+			time_series["photographer_entries"],
+			event_tz,
+			sheet_tz=sheet_tz,
+		)
+		if photographer_entry is None:
+			location_path = time_series.get("inferred_location_path")
+		else:
+			location_path = photographer_entry["location_path"]
+		if location_path is None:
+			continue
+		photos_by_location.setdefault(location_path, []).append((queue_file, image_json))
+
+	for location_path, photos in photos_by_location.items():
+		entries = time_series["check_ins_by_location"].get(location_path, [])
+		lead, batch = _split_runlist_lead_and_batch(entries, sheet_tz=sheet_tz)
+		if len(batch) < 2:
+			continue
+
+		sorted_photos = sorted(photos, key=lambda item: item[1]["image_time"])
+		bursts = _group_photo_bursts(sorted_photos)
+		if len(bursts) < 2 and lead is None:
+			continue
+		if not _photos_overlap_runlist_batch(bursts, lead, batch, sheet_tz=sheet_tz):
+			continue
+
+		runlist_sequence = ([lead] if lead is not None else []) + batch
+		for index, burst in enumerate(bursts):
+			if index >= len(runlist_sequence):
+				break
+			check_in = runlist_sequence[index]
+			for queue_file, _image_json in burst:
+				assignments[queue_file] = check_in
+
+	time_series["sequential_check_in_by_queue_file"] = assignments
+	return assignments
+
 def resolve_check_in(image_time, location_path, check_ins_by_location, event_tz=None, sheet_tz=None):
 	del event_tz
 	entries = check_ins_by_location.get(location_path, [])
@@ -1505,7 +1614,7 @@ def resolve_check_in(image_time, location_path, check_ins_by_location, event_tz=
 		return None
 
 	def entry_time(entry):
-		return comparison_instant(entry["time"], naive_tz=sheet_tz)
+		return _check_in_instant(entry, sheet_tz)
 
 	comparison_time = comparison_instant(image_time)
 	# Use the latest check-in at or before the photo. A photo before Laurel's 22:22
@@ -1555,7 +1664,7 @@ def resolve_discipline(image_time, location_path, discipline_entries_by_location
 		return None
 	return entry.get("discipline")
 
-def resolve_photo_match(image_time, camera_serial, time_series):
+def resolve_photo_match(image_time, camera_serial, time_series, *, queue_file=None):
 	event_tz = event_timezone_from_time_series(time_series)
 	sheet_tz = sheet_timezone_from_time_series(time_series)
 	photographer_entry = resolve_photographer_entry(
@@ -1578,12 +1687,16 @@ def resolve_photo_match(image_time, camera_serial, time_series):
 		else:
 			photographer = None
 
-	check_in = resolve_check_in(
-		image_time,
-		location_path,
-		time_series["check_ins_by_location"],
-		sheet_tz=sheet_tz,
-	)
+	check_in = None
+	if queue_file:
+		check_in = time_series.get("sequential_check_in_by_queue_file", {}).get(queue_file)
+	if check_in is None:
+		check_in = resolve_check_in(
+			image_time,
+			location_path,
+			time_series["check_ins_by_location"],
+			sheet_tz=sheet_tz,
+		)
 	dock_key = _duel_dock_key(location_path)
 	if dock_key is not None:
 		discipline = resolve_dock_discipline(
@@ -1818,6 +1931,7 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 		logger.info("No readable images in queue directory %s", queue_dir)
 		return
 
+	build_sequential_check_in_assignments(queue_entries, time_series)
 	sequence_ids = build_sequence_ids(queue_entries, time_series)
 
 	for queue_file, image_json in queue_entries:
@@ -1841,6 +1955,7 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 			image_json["image_time"],
 			image_json.get("camera_serial"),
 			time_series,
+			queue_file=queue_file,
 		)
 		duel_keyword = None
 		if match is None:

@@ -248,7 +248,7 @@ Event metadata from the `event` block becomes `X-event:`, `X-org:`, `X-club:`, `
 1. **Image time** — From EXIF (`SubSecCreateDate`, `SubSecDateTimeOriginal`, `CreateDate`, `DateTimeOriginal`, `FileModifyDate`) with offset tags; naive timestamps use `NAIVE_TIMESTAMP_TIMEZONE` (default `America/Los_Angeles`).
 2. **Camera serial** — Body serial tags, excluding lens serials.
 3. **Photographer location** — Latest `photographer_check_in` at or before photo time where serial matches; ties prefer lower dock lane number.
-4. **Team check-in** — Latest `team_check_in` at or before photo time for that location.
+4. **Team check-in** — Latest `team_check_in` at or before photo time for that location. When a runlist batch is detected (many check-ins clustered together after a long gap from an earlier lead check-in), photos are grouped into bursts (~3 s apart) and matched sequentially: first burst to the lead check-in, then each later burst to the next check-in in batch order.
 5. **Discipline** — Latest `set_discipline` with 120-second grace window; Dueling Dogs resolves across both lanes of a dock.
 6. **Handler metadata** — `photo_request` and `message_to_photographer` from check-in or per-handler maps.
 
