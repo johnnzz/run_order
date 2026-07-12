@@ -146,6 +146,8 @@ DUELING_DOGS_DISCIPLINE = "dueling dogs"
 CHECK_IN_GRACE_SECONDS = 120
 # Photos within this gap are treated as one run/burst (typically 2 frames).
 PHOTO_BURST_GAP_SECONDS = 3
+# QR check-ins may be logged slightly after the jump; match the nearest check-in within this window.
+FORWARD_CHECK_IN_GRACE_SECONDS = 5
 # Check-ins separated by more than this are a pre-batch lead vs a runlist batch cluster.
 CHECK_IN_BATCH_GAP_SECONDS = 120
 
@@ -1683,15 +1685,28 @@ def resolve_check_in(image_time, location_path, check_ins_by_location, event_tz=
 		return _check_in_instant(entry, sheet_tz)
 
 	comparison_time = comparison_instant(image_time)
-	# Use the latest check-in at or before the photo. A photo before Laurel's 22:22
-	# check-in still matches the previous handler at that location.
 	at_or_before = [
 		entry for entry in entries
 		if entry_time(entry) <= comparison_time
 	]
-	if not at_or_before:
-		return None
-	return max(at_or_before, key=entry_time)
+	forward_grace = timedelta(seconds=FORWARD_CHECK_IN_GRACE_SECONDS)
+	just_after = [
+		entry for entry in entries
+		if comparison_time < entry_time(entry) <= comparison_time + forward_grace
+	]
+	if at_or_before and just_after:
+		before = max(at_or_before, key=entry_time)
+		after = min(just_after, key=entry_time)
+		gap_before = comparison_time - entry_time(before)
+		gap_after = entry_time(after) - comparison_time
+		if gap_after < gap_before:
+			return after
+		return before
+	if at_or_before:
+		return max(at_or_before, key=entry_time)
+	if just_after:
+		return min(just_after, key=entry_time)
+	return None
 
 def resolve_discipline_entry(image_time, location_path, discipline_entries_by_location, event_tz=None, sheet_tz=None):
 	del event_tz
