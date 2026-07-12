@@ -1107,6 +1107,8 @@ def _dog_call_name(entry):
 	dog_name = rot.dog_display_name(entry)
 	if dog_name == rot.UNSPECIFIED_DOG_NAME:
 		return None
+	if normalize_quoted_dog_name(dog_name).lower() == "dog":
+		return None
 	return normalize_quoted_dog_name(dog_name)
 
 def _org_ids_from_entry(entry):
