@@ -12,6 +12,10 @@ and event data, and then encodes that data in the image using exiftool keywords.
 Once the file has been processed, it is renamed and moved to a processed directory,
 and optionally an unmodified version is placed in a backup directory.
 
+When --process completes, a photo summary JSON file named <event>-ps.json is written
+next to the timeseries file. Each entry records the image name, capture timestamp,
+and matched handler and dog.
+
 Each processed file will have EXIF keywords prefixed with X-, such as X-team,
 X-handler, X-dog, X-event, X-org.  Results can be reviewed with the 
 summarize_dir.py script.
@@ -1924,7 +1928,80 @@ def assign_original_filename_keyword(image_json, original_filename):
 		image_json["log"].append("add original filename keyword")
 		logger.info(" ** Original filename: %s", ofn_keyword)
 
-def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rating=None, *, force=False, safe=False):
+PHOTO_SUMMARY_SCHEMA_VERSION = "1.0.0"
+
+
+def sanitize_event_name_for_filename(name):
+	stripped = str(name or "").strip()
+	if not stripped:
+		return "Event"
+	with_underscores = re.sub(r"\s+", "_", stripped)
+	sanitized = re.sub(r"[^A-Za-z0-9_]", "", with_underscores)
+	sanitized = re.sub(r"_+", "_", sanitized).strip("_")
+	return sanitized or "Event"
+
+
+def photo_summary_path(timeline_path, time_series):
+	path = Path(timeline_path)
+	if path.name.endswith("-ts.json"):
+		return path.with_name("{}-ps.json".format(path.name[:-8]))
+	event_name = time_series.get("event_name") or "Event"
+	event_code = time_series.get("event_dogsportphoto_code")
+	safe_name = sanitize_event_name_for_filename(event_name)
+	if event_code:
+		filename = "{}-{}-ps.json".format(safe_name, event_code)
+	else:
+		filename = "{}-ps.json".format(safe_name)
+	if path.parent and str(path.parent) not in {".", ""}:
+		return path.parent / filename
+	return Path(filename)
+
+
+def photo_summary_timestamp(image_time):
+	if image_time is None:
+		return None
+	if hasattr(image_time, "isoformat"):
+		return image_time.isoformat()
+	return str(image_time)
+
+
+def build_photo_summary_entry(queue_file, image_json, match):
+	return {
+		"image": os.path.basename(queue_file),
+		"timestamp": photo_summary_timestamp(image_json.get("image_time")),
+		"handler": match.get("handler") if match else None,
+		"dog": match.get("dog") if match else None,
+	}
+
+
+def build_photo_summary(time_series, queue_entries):
+	build_sequential_check_in_assignments(queue_entries, time_series)
+	photos = []
+	for queue_file, image_json in sorted(queue_entries, key=lambda item: item[1]["image_time"]):
+		match = resolve_photo_match(
+			image_json["image_time"],
+			image_json.get("camera_serial"),
+			time_series,
+			queue_file=queue_file,
+		)
+		photos.append(build_photo_summary_entry(queue_file, image_json, match))
+	return {
+		"schema_version": PHOTO_SUMMARY_SCHEMA_VERSION,
+		"event": time_series.get("event_name"),
+		"event_code": time_series.get("event_dogsportphoto_code"),
+		"photos": photos,
+	}
+
+
+def write_photo_summary(path, summary):
+	target = Path(path)
+	target.parent.mkdir(parents=True, exist_ok=True)
+	with open(target, "w", encoding="utf-8") as handle:
+		json.dump(summary, handle, indent=2)
+		handle.write("\n")
+
+
+def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rating=None, *, force=False, safe=False, timeline_path=None):
 	queue_files = list(iter_queue_files(queue_dir))
 	if not queue_files:
 		logger.info("Queue directory %s is empty; nothing to do", queue_dir)
@@ -2097,6 +2174,14 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 			logger.info("* Output: %s", processed_file)
 		logger.info("")
 
+	summary = build_photo_summary(time_series, queue_entries)
+	if timeline_path:
+		summary_path = photo_summary_path(timeline_path, time_series)
+	else:
+		summary_path = photo_summary_path(DEFAULT_TIMELINE_FILE, time_series)
+	write_photo_summary(summary_path, summary)
+	logger.info("Wrote photo summary to %s", summary_path)
+
 	remove_empty_queue_dirs(queue_dir)
 
 def main():
@@ -2126,6 +2211,7 @@ def main():
 			default_rating=int(args["--rating"]) if args["--rating"] is not None else None,
 			force=args["--force"],
 			safe=args["--safe"],
+			timeline_path=timeline_path,
 		)
 		return
 
