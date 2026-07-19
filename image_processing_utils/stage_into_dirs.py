@@ -58,6 +58,7 @@ def normalize_quoted_dog_name(value: str) -> str:
 DEFAULT_PROCESSED_DIR = "./processed"
 DEFAULT_PUBLISH_DIR = "./publish"
 DEFAULT_TIMELINE_FILE = "eventname-ts.json"
+UNMATCHED_STAGING_DIR = "unmatched"
 QUOTED_KEYWORD_RE = re.compile(r'"([^"]*)"')
 X_KEYWORD_RE = re.compile(r"X-([^:]+):\s*(.+)", re.IGNORECASE)
 
@@ -187,9 +188,10 @@ def staging_dir_names_from_keywords(keywords):
 	teams = teams_from_keywords(keywords)
 	if teams:
 		return teams
-	if dogs_from_keywords(keywords):
-		return []
-	return handlers_from_keywords(keywords)
+	handlers = handlers_from_keywords(keywords)
+	if handlers:
+		return handlers
+	return [UNMATCHED_STAGING_DIR]
 
 def team_from_keywords(keywords):
 	teams = teams_from_keywords(keywords)
@@ -472,9 +474,6 @@ def stage_processed(processed_dir, publish_dir, timeline_path, *, force=False, s
 		if keywords is None:
 			continue
 		dir_names = staging_dir_names_from_keywords(keywords)
-		if not dir_names:
-			logger.warning("Skipping %s: no X-team or X-handler keyword found", name)
-			continue
 
 		staged_any = False
 		for dir_name in dir_names:

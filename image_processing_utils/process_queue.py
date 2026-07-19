@@ -1517,6 +1517,22 @@ def resolve_photographer_location(image_time, camera_serial, photographer_entrie
 def _check_in_instant(entry, sheet_tz=None):
 	return comparison_instant(entry["time"], naive_tz=sheet_tz)
 
+def first_team_check_in_instant(time_series, sheet_tz=None):
+	first = None
+	for entries in time_series.get("check_ins_by_location", {}).values():
+		for entry in entries:
+			instant = _check_in_instant(entry, sheet_tz)
+			if first is None or instant < first:
+				first = instant
+	return first
+
+def is_before_first_team_check_in(image_time, time_series):
+	sheet_tz = sheet_timezone_from_time_series(time_series)
+	first = first_team_check_in_instant(time_series, sheet_tz=sheet_tz)
+	if first is None:
+		return False
+	return comparison_instant(image_time) < first
+
 def event_mode_checkin_from_time_series(time_series):
 	mode = time_series.get("event_mode_checkin")
 	if isinstance(mode, str) and mode.strip():
@@ -1746,6 +1762,9 @@ def resolve_discipline(image_time, location_path, discipline_entries_by_location
 	return entry.get("discipline")
 
 def resolve_photo_match(image_time, camera_serial, time_series, *, queue_file=None):
+	if is_before_first_team_check_in(image_time, time_series):
+		return None
+
 	event_tz = event_timezone_from_time_series(time_series)
 	sheet_tz = sheet_timezone_from_time_series(time_series)
 	photographer_entry = resolve_photographer_entry(
@@ -2098,6 +2117,40 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 			logger.info("Processing %s from queue subdirectory %s", file, os.path.dirname(queue_relative))
 
 		log_processing_start(file, image_json)
+
+		if is_before_first_team_check_in(image_json["image_time"], time_series):
+			logger.info(
+				"* Before first team check-in; moving to processed without modification"
+			)
+			output_name = file
+			if safe:
+				output_name, processed_file, backup_file = unique_output_names(
+					processed_dir,
+					backup_dir,
+					output_name,
+				)
+			else:
+				processed_file = os.path.join(processed_dir, output_name)
+				backup_file = os.path.join(backup_dir, output_name) if backup_dir else None
+			if backup_dir and backup_file:
+				backup_file, backed_up = copy_destination(
+					queue_file,
+					backup_file,
+					force=force,
+					safe=safe,
+				)
+				if backed_up:
+					logger.info("* Backing up to %s", backup_file)
+			processed_file, processed = move_destination(
+				queue_file,
+				processed_file,
+				force=force,
+				safe=safe,
+			)
+			if processed:
+				logger.info("* Output: %s", processed_file)
+			logger.info("")
+			continue
 
 		if default_rating is not None and not image_json["Rating"]:
 			image_json["Rating"] = default_rating
