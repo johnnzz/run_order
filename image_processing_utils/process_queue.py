@@ -1868,6 +1868,61 @@ def iter_queue_files(queue_dir):
 			if os.path.isfile(path):
 				yield path
 
+def passthrough_queue_file_reason(filename):
+	name = os.path.basename(filename)
+	if name.startswith("._"):
+		return "macOS metadata file"
+	return None
+
+def move_queue_file_unmodified(
+	queue_file,
+	processed_dir,
+	backup_dir,
+	*,
+	force=False,
+	safe=False,
+	reason=None,
+):
+	file = os.path.basename(queue_file)
+	if reason:
+		logger.info("* %s; moving to processed without modification", reason)
+	else:
+		logger.info("* Moving to processed without modification")
+	output_name = file
+	if safe:
+		output_name, processed_file, backup_file = unique_output_names(
+			processed_dir,
+			backup_dir,
+			output_name,
+		)
+	else:
+		processed_file = os.path.join(processed_dir, output_name)
+		backup_file = os.path.join(backup_dir, output_name) if backup_dir else None
+	if backup_dir and backup_file:
+		backup_file, backed_up = copy_destination(
+			queue_file,
+			backup_file,
+			force=force,
+			safe=safe,
+		)
+		if backed_up:
+			logger.info("* Backing up to %s", backup_file)
+	processed_file, processed = move_destination(
+		queue_file,
+		processed_file,
+		force=force,
+		safe=safe,
+	)
+	if processed:
+		logger.info("* Output: %s", processed_file)
+	return processed_file, processed
+
+def log_batch_progress(label, index, total):
+	if total <= 0:
+		return
+	if index == 1 or index == total or index % max(1, total // 20) == 0:
+		logger.info("%s (%d/%d)...", label, index, total)
+
 def file_md5(path):
 	digest = hashlib.md5()
 	with open(path, "rb") as handle:
@@ -2080,10 +2135,13 @@ def write_photo_summary(path, summary):
 
 
 def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rating=None, *, force=False, safe=False, timeline_path=None):
+	logger.info("Scanning queue directory %s", queue_dir)
 	queue_files = list(iter_queue_files(queue_dir))
 	if not queue_files:
 		logger.info("Queue directory %s is empty; nothing to do", queue_dir)
 		return
+
+	logger.info("Found %d file(s) in queue", len(queue_files))
 
 	inferred_location = time_series.get("inferred_location_path")
 	if inferred_location is not None:
@@ -2094,61 +2152,84 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 
 	event_keywords = event_metadata_keywords(time_series)
 	queue_entries = []
-	for queue_file in queue_files:
+	passthrough_files = []
+	logger.info("Examining queue files and reading EXIF metadata...")
+	for index, queue_file in enumerate(queue_files, start=1):
+		log_batch_progress("Examining queue files", index, len(queue_files))
+		file = os.path.basename(queue_file)
+		passthrough_reason = passthrough_queue_file_reason(queue_file)
+		if passthrough_reason:
+			passthrough_files.append((queue_file, passthrough_reason))
+			logger.info("Skipping EXIF for %s (%s)", file, passthrough_reason)
+			continue
 		image_json = get_exif(queue_file)
 		if image_json is None:
+			passthrough_files.append((queue_file, "unrecognized or non-image file"))
+			logger.info("Skipping EXIF for %s (unrecognized or non-image file)", file)
 			continue
 		model = camera_model_from_exif(image_json)
 		if model:
 			maybe_save_camera_sample(queue_file, model)
 		queue_entries.append((queue_file, image_json))
 
+	logger.info(
+		"Queue scan complete: %d image(s) to process, %d file(s) to pass through unmodified",
+		len(queue_entries),
+		len(passthrough_files),
+	)
+
+	if passthrough_files:
+		logger.info("Moving pass-through files to processed without modification...")
+		for index, (queue_file, reason) in enumerate(passthrough_files, start=1):
+			file = os.path.basename(queue_file)
+			log_batch_progress("Moving pass-through files", index, len(passthrough_files))
+			logger.info("Pass-through %d/%d: %s", index, len(passthrough_files), file)
+			move_queue_file_unmodified(
+				queue_file,
+				processed_dir,
+				backup_dir,
+				force=force,
+				safe=safe,
+				reason=reason,
+			)
+			logger.info("")
+
 	if not queue_entries:
-		logger.info("No readable images in queue directory %s", queue_dir)
+		if passthrough_files:
+			logger.info(
+				"No processable images in queue; moved %d pass-through file(s) to processed",
+				len(passthrough_files),
+			)
+		else:
+			logger.info("No readable images in queue directory %s", queue_dir)
+		remove_empty_queue_dirs(queue_dir)
 		return
 
+	logger.info("Building sequential check-in assignments...")
 	build_sequential_check_in_assignments(queue_entries, time_series)
+	logger.info("Assigning sequence IDs...")
 	sequence_ids = build_sequence_ids(queue_entries, time_series)
+	logger.info("Processing %d image(s)...", len(queue_entries))
 
-	for queue_file, image_json in queue_entries:
+	for index, (queue_file, image_json) in enumerate(queue_entries, start=1):
 		file = os.path.basename(queue_file)
 		queue_relative = os.path.relpath(queue_file, queue_dir)
+		log_batch_progress("Processing images", index, len(queue_entries))
+		logger.info("Processing image %d/%d: %s", index, len(queue_entries), file)
 		if queue_relative != file:
 			logger.info("Processing %s from queue subdirectory %s", file, os.path.dirname(queue_relative))
 
 		log_processing_start(file, image_json)
 
 		if is_before_first_team_check_in(image_json["image_time"], time_series):
-			logger.info(
-				"* Before first team check-in; moving to processed without modification"
-			)
-			output_name = file
-			if safe:
-				output_name, processed_file, backup_file = unique_output_names(
-					processed_dir,
-					backup_dir,
-					output_name,
-				)
-			else:
-				processed_file = os.path.join(processed_dir, output_name)
-				backup_file = os.path.join(backup_dir, output_name) if backup_dir else None
-			if backup_dir and backup_file:
-				backup_file, backed_up = copy_destination(
-					queue_file,
-					backup_file,
-					force=force,
-					safe=safe,
-				)
-				if backed_up:
-					logger.info("* Backing up to %s", backup_file)
-			processed_file, processed = move_destination(
+			move_queue_file_unmodified(
 				queue_file,
-				processed_file,
+				processed_dir,
+				backup_dir,
 				force=force,
 				safe=safe,
+				reason="Before first team check-in",
 			)
-			if processed:
-				logger.info("* Output: %s", processed_file)
 			logger.info("")
 			continue
 
@@ -2315,16 +2396,26 @@ def main():
 			raise SystemExit("Cannot use --force and --safe together")
 		timeline_path = args["--timeline"] or DEFAULT_TIMELINE_FILE
 		merge_path = args["--timeline2"] or None
+		logger.info("Queue directory: %s", queue_dir)
+		logger.info("Processed directory: %s", processed_dir)
+		if backup_dir:
+			logger.info("Backup directory: %s", backup_dir)
+		logger.info("Loading time series from %s", timeline_path)
+		if merge_path:
+			logger.info("Merging secondary time series from %s", merge_path)
+		time_series = load_time_series(timeline_path, merge_path=merge_path)
+		logger.info("Starting queue processing...")
 		process_queue(
 			queue_dir=queue_dir,
 			processed_dir=processed_dir,
 			backup_dir=backup_dir,
-			time_series=load_time_series(timeline_path, merge_path=merge_path),
+			time_series=time_series,
 			default_rating=int(args["--rating"]) if args["--rating"] is not None else None,
 			force=args["--force"],
 			safe=args["--safe"],
 			timeline_path=timeline_path,
 		)
+		logger.info("Queue processing complete")
 		return
 
 	print_status(queue_dir, processed_dir, backup_dir)
