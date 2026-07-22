@@ -1480,6 +1480,72 @@ def event_metadata_keywords(time_series):
 def _location_label(location_path):
 	return location_path[-1] if location_path else ""
 
+FREESHOOT_LOCATION_PREFIX = "Freeshoot"
+
+def _is_freeshoot_location_path(location_path):
+	label = _location_label(location_path)
+	return isinstance(label, str) and label.startswith(FREESHOOT_LOCATION_PREFIX)
+
+def _location_activity_window(entries, sheet_tz=None):
+	if not entries:
+		return None
+	times = [_check_in_instant(entry, sheet_tz) for entry in entries]
+	grace = timedelta(seconds=CHECK_IN_GRACE_SECONDS)
+	return min(times) - grace, max(times) + grace
+
+def _check_in_handler_name(check_in):
+	handler = check_in.get("handler") if isinstance(check_in, dict) else None
+	if not isinstance(handler, str):
+		return ""
+	return handler.strip()
+
+def _is_placeholder_check_in(check_in):
+	name = _check_in_handler_name(check_in).lower()
+	return name in {"unspecified", "inactive"}
+
+def _is_assignable_team_check_in(check_in):
+	if not isinstance(check_in, dict):
+		return False
+	if _is_placeholder_check_in(check_in):
+		return False
+	dog = check_in.get("dog")
+	return isinstance(dog, str) and bool(dog.strip())
+
+def _primary_team_location_path(time_series):
+	best_path = None
+	best_count = 0
+	for location_path, entries in time_series.get("check_ins_by_location", {}).items():
+		if _is_freeshoot_location_path(location_path):
+			continue
+		assignable = sum(1 for entry in entries if _is_assignable_team_check_in(entry))
+		if assignable > best_count:
+			best_count = assignable
+			best_path = location_path
+	return best_path
+
+def resolve_match_location_path(image_time, camera_serial, time_series, *, sheet_tz=None):
+	photographer_entry = resolve_photographer_entry(
+		image_time,
+		camera_serial,
+		time_series.get("photographer_entries", []),
+		sheet_tz=sheet_tz,
+	)
+	if photographer_entry is None:
+		return time_series.get("inferred_location_path")
+
+	location_path = photographer_entry["location_path"]
+	if not _is_freeshoot_location_path(location_path):
+		return location_path
+
+	freeshoot_entries = time_series.get("check_ins_by_location", {}).get(location_path, [])
+	window = _location_activity_window(freeshoot_entries, sheet_tz=sheet_tz)
+	comparison_time = comparison_instant(image_time)
+	if window is not None and window[0] <= comparison_time <= window[1]:
+		return location_path
+
+	primary = _primary_team_location_path(time_series)
+	return primary or location_path
+
 def resolve_photographer_entry(image_time, camera_serial, photographer_entries, event_tz=None, sheet_tz=None):
 	del event_tz
 	if not camera_serial:
@@ -1574,6 +1640,38 @@ def _split_runlist_lead_and_batch(entries, sheet_tz=None):
 
 	return entries[batch_start - 1], batch
 
+def _cluster_check_in_batches(entries, sheet_tz=None):
+	if not entries:
+		return []
+
+	clusters = [[entries[0]]]
+	for index in range(1, len(entries)):
+		gap = (
+			_check_in_instant(entries[index], sheet_tz)
+			- _check_in_instant(entries[index - 1], sheet_tz)
+		).total_seconds()
+		if gap > CHECK_IN_BATCH_GAP_SECONDS:
+			clusters.append([entries[index]])
+		else:
+			clusters[-1].append(entries[index])
+	return clusters
+
+def _runlist_batch_sequences(entries, sheet_tz=None):
+	clusters = _cluster_check_in_batches(entries, sheet_tz=sheet_tz)
+	sequences = []
+	for index, cluster in enumerate(clusters):
+		lead = None
+		if index > 0 and len(clusters[index - 1]) == 1:
+			lead = clusters[index - 1][0]
+		lead_from_split, batch = _split_runlist_lead_and_batch(cluster, sheet_tz=sheet_tz)
+		if lead is None:
+			lead = lead_from_split
+		if len(batch) < 2:
+			continue
+		runlist_sequence = ([lead] if lead is not None else []) + batch
+		sequences.append((lead, batch, runlist_sequence))
+	return sequences
+
 def _group_photo_bursts(sorted_items):
 	if not sorted_items:
 		return []
@@ -1588,20 +1686,31 @@ def _group_photo_bursts(sorted_items):
 			bursts.append([item])
 	return bursts
 
-def _photos_overlap_runlist_batch(bursts, lead, batch, sheet_tz=None):
-	if not bursts or not batch:
-		return False
-
-	first_photo = comparison_instant(bursts[0][0][1]["image_time"])
-	last_photo = comparison_instant(bursts[-1][-1][1]["image_time"])
+def _runlist_batch_time_window(lead, batch, sheet_tz=None):
 	grace = timedelta(seconds=CHECK_IN_GRACE_SECONDS)
 	if lead is not None:
 		sequence_start = _check_in_instant(lead, sheet_tz)
 	else:
 		sequence_start = _check_in_instant(batch[0], sheet_tz)
 	sequence_end = _check_in_instant(batch[-1], sheet_tz)
-	window_start = sequence_start - grace
-	window_end = sequence_end + grace
+	return sequence_start - grace, sequence_end + grace
+
+def _photos_overlap_runlist_batch(bursts, lead, batch, sheet_tz=None):
+	if not bursts or not batch:
+		return False
+
+	first_photo = comparison_instant(bursts[0][0][1]["image_time"])
+	last_photo = comparison_instant(bursts[-1][-1][1]["image_time"])
+	window_start, window_end = _runlist_batch_time_window(lead, batch, sheet_tz=sheet_tz)
+	return first_photo <= window_end and last_photo >= window_start
+
+def _burst_overlaps_runlist_batch(burst, lead, batch, sheet_tz=None):
+	if not burst or not batch:
+		return False
+
+	first_photo = comparison_instant(burst[0][1]["image_time"])
+	last_photo = comparison_instant(burst[-1][1]["image_time"])
+	window_start, window_end = _runlist_batch_time_window(lead, batch, sheet_tz=sheet_tz)
 	return first_photo <= window_end and last_photo >= window_start
 
 def _burst_representative_instant(burst):
@@ -1627,66 +1736,77 @@ def _pick_runlist_check_in_for_burst(burst, runlist_sequence, used_indices, shee
 
 	return min(unused, key=lambda index: (entry_instant(index), index))
 
+def _assign_runlist_bursts_to_sequence(bursts, runlist_sequence, assignments, used_files, sheet_tz):
+	if len(runlist_sequence) > len(bursts):
+		used_indices = set()
+		for burst in bursts:
+			pick = _pick_runlist_check_in_for_burst(
+				burst,
+				runlist_sequence,
+				used_indices,
+				sheet_tz=sheet_tz,
+			)
+			if pick is None:
+				break
+			used_indices.add(pick)
+			check_in = runlist_sequence[pick]
+			for queue_file, _image_json in burst:
+				if queue_file in used_files:
+					continue
+				assignments[queue_file] = check_in
+				used_files.add(queue_file)
+	else:
+		for index, burst in enumerate(bursts):
+			if index >= len(runlist_sequence):
+				break
+			check_in = runlist_sequence[index]
+			for queue_file, _image_json in burst:
+				if queue_file in used_files:
+					continue
+				assignments[queue_file] = check_in
+				used_files.add(queue_file)
+
 def build_sequential_check_in_assignments(queue_entries, time_series):
 	sheet_tz = sheet_timezone_from_time_series(time_series)
-	event_tz = event_timezone_from_time_series(time_series)
 	assignments = {}
+	used_files = set()
 	photos_by_location = {}
 
 	for queue_file, image_json in queue_entries:
-		photographer_entry = resolve_photographer_entry(
+		location_path = resolve_match_location_path(
 			image_json["image_time"],
 			image_json.get("camera_serial"),
-			time_series["photographer_entries"],
-			event_tz,
+			time_series,
 			sheet_tz=sheet_tz,
 		)
-		if photographer_entry is None:
-			location_path = time_series.get("inferred_location_path")
-		else:
-			location_path = photographer_entry["location_path"]
 		if location_path is None:
 			continue
 		photos_by_location.setdefault(location_path, []).append((queue_file, image_json))
 
 	for location_path, photos in photos_by_location.items():
 		entries = time_series["check_ins_by_location"].get(location_path, [])
-		lead, batch = _split_runlist_lead_and_batch(entries, sheet_tz=sheet_tz)
-		if len(batch) < 2:
-			continue
-		if not sequential_check_in_matching_enabled(time_series, lead=lead):
-			continue
-
 		sorted_photos = sorted(photos, key=lambda item: item[1]["image_time"])
 		bursts = _group_photo_bursts(sorted_photos)
-		if len(bursts) < 2 and lead is None:
-			continue
-		if not _photos_overlap_runlist_batch(bursts, lead, batch, sheet_tz=sheet_tz):
-			continue
+		for lead, batch, runlist_sequence in _runlist_batch_sequences(entries, sheet_tz=sheet_tz):
+			if not sequential_check_in_matching_enabled(time_series, lead=lead):
+				continue
 
-		runlist_sequence = ([lead] if lead is not None else []) + batch
-		if len(runlist_sequence) > len(bursts):
-			used_indices = set()
-			for burst in bursts:
-				pick = _pick_runlist_check_in_for_burst(
-					burst,
-					runlist_sequence,
-					used_indices,
-					sheet_tz=sheet_tz,
-				)
-				if pick is None:
-					break
-				used_indices.add(pick)
-				check_in = runlist_sequence[pick]
-				for queue_file, _image_json in burst:
-					assignments[queue_file] = check_in
-		else:
-			for index, burst in enumerate(bursts):
-				if index >= len(runlist_sequence):
-					break
-				check_in = runlist_sequence[index]
-				for queue_file, _image_json in burst:
-					assignments[queue_file] = check_in
+			overlapping_bursts = [
+				burst for burst in bursts
+				if _burst_overlaps_runlist_batch(burst, lead, batch, sheet_tz=sheet_tz)
+			]
+			if len(overlapping_bursts) < 2 and lead is None:
+				continue
+			if not overlapping_bursts:
+				continue
+
+			_assign_runlist_bursts_to_sequence(
+				overlapping_bursts,
+				runlist_sequence,
+				assignments,
+				used_files,
+				sheet_tz,
+			)
 
 	time_series["sequential_check_in_by_queue_file"] = assignments
 	return assignments
@@ -1780,12 +1900,19 @@ def resolve_photo_match(image_time, camera_serial, time_series, *, queue_file=No
 			return None
 		photographer = None
 	else:
-		location_path = photographer_entry["location_path"]
+		location_path = resolve_match_location_path(
+			image_time,
+			camera_serial,
+			time_series,
+			sheet_tz=sheet_tz,
+		)
 		photographer = photographer_entry.get("photographer")
 		if isinstance(photographer, str) and photographer.strip():
 			photographer = photographer.strip()
 		else:
 			photographer = None
+	if location_path is None:
+		return None
 
 	check_in = None
 	if queue_file:
