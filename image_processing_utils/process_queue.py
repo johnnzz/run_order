@@ -1972,6 +1972,248 @@ def resolve_discipline(image_time, location_path, discipline_entries_by_location
 		return None
 	return entry.get("discipline")
 
+def _resolve_check_in_bracket(
+	image_time,
+	location_path,
+	check_ins_by_location,
+	sheet_tz=None,
+	*,
+	forward_grace_seconds=FORWARD_CHECK_IN_GRACE_SECONDS,
+):
+	entries = check_ins_by_location.get(location_path, [])
+	if not entries:
+		return None, None
+
+	def entry_time(entry):
+		return _check_in_instant(entry, sheet_tz)
+
+	comparison_time = comparison_instant(image_time)
+	at_or_before = [
+		entry for entry in entries
+		if entry_time(entry) <= comparison_time
+	]
+	forward_grace = timedelta(seconds=forward_grace_seconds)
+	just_after = [
+		entry for entry in entries
+		if comparison_time < entry_time(entry) <= comparison_time + forward_grace
+	]
+	prior = max(at_or_before, key=entry_time) if at_or_before else None
+	next_check_in = min(just_after, key=entry_time) if just_after else None
+	return prior, next_check_in
+
+def _select_photo_check_in(
+	image_time,
+	location_path,
+	time_series,
+	*,
+	queue_file=None,
+	sheet_tz=None,
+):
+	forward_grace_seconds = forward_check_in_grace_seconds(time_series)
+	sequential_check_in = None
+	if queue_file:
+		sequential_check_in = time_series.get("sequential_check_in_by_queue_file", {}).get(queue_file)
+	timestamp_check_in = resolve_check_in(
+		image_time,
+		location_path,
+		time_series["check_ins_by_location"],
+		sheet_tz=sheet_tz,
+		forward_grace_seconds=forward_grace_seconds,
+	)
+	prior_check_in, next_check_in = _resolve_check_in_bracket(
+		image_time,
+		location_path,
+		time_series["check_ins_by_location"],
+		sheet_tz=sheet_tz,
+		forward_grace_seconds=forward_grace_seconds,
+	)
+
+	method = "timestamp"
+	check_in = timestamp_check_in
+	if (
+		sequential_check_in is not None
+		and timestamp_check_in is not None
+		and event_mode_checkin_from_time_series(time_series) == "Runlist"
+	):
+		sequential_gap = _check_in_time_gap(image_time, sequential_check_in, sheet_tz=sheet_tz)
+		timestamp_gap = _check_in_time_gap(image_time, timestamp_check_in, sheet_tz=sheet_tz)
+		if (
+			sequential_gap is not None
+			and timestamp_gap is not None
+			and (
+				sequential_gap > CHECK_IN_GRACE_SECONDS
+				or sequential_gap > timestamp_gap + 10
+			)
+		):
+			check_in = timestamp_check_in
+			method = "timestamp_over_sequential"
+		else:
+			check_in = sequential_check_in
+			method = "sequential"
+	elif sequential_check_in is not None:
+		check_in = sequential_check_in
+		method = "sequential"
+
+	return {
+		"check_in": check_in,
+		"method": method,
+		"sequential_check_in": sequential_check_in,
+		"timestamp_check_in": timestamp_check_in,
+		"prior_check_in": prior_check_in,
+		"next_check_in": next_check_in,
+		"forward_grace_seconds": forward_grace_seconds,
+	}
+
+def _photo_summary_check_in_ref(check_in, image_time=None, sheet_tz=None):
+	if check_in is None:
+		return None
+	instant = _check_in_instant(check_in, sheet_tz)
+	ref = {
+		"check_in_timestamp": photo_summary_timestamp(instant),
+		"handler": check_in.get("handler"),
+		"dog": check_in.get("dog"),
+	}
+	if image_time is not None:
+		gap_seconds = (comparison_instant(image_time) - instant).total_seconds()
+		rounded = round(abs(gap_seconds), 3)
+		if rounded == 0:
+			ref["photo_at_same_time_as_check_in"] = True
+		elif gap_seconds > 0:
+			ref["photo_after_check_in_seconds"] = rounded
+		else:
+			ref["photo_before_check_in_seconds"] = rounded
+	return ref
+
+def _check_in_timing_label(check_in, image_time, sheet_tz=None):
+	if check_in is None:
+		return None
+	gap_seconds = (comparison_instant(image_time) - _check_in_instant(check_in, sheet_tz)).total_seconds()
+	rounded = int(round(abs(gap_seconds)))
+	if rounded == 0:
+		return "photo taken at check-in time"
+	if gap_seconds > 0:
+		return "photo taken {}s after this check-in".format(rounded)
+	return "photo taken {}s before this check-in".format(rounded)
+
+def _describe_photo_match_logic(selection, image_time, time_series, sheet_tz=None):
+	check_in = selection.get("check_in")
+	if check_in is None:
+		prior = selection.get("prior_check_in")
+		next_check_in = selection.get("next_check_in")
+		if prior is None and next_check_in is None:
+			return "no team check-in within match window"
+		parts = []
+		if prior is not None:
+			parts.append(
+				"previous check-in for {} ({})".format(
+					_check_in_handler_name(prior) or "team",
+					_check_in_timing_label(prior, image_time, sheet_tz=sheet_tz),
+				)
+			)
+		if next_check_in is not None:
+			parts.append(
+				"next check-in for {} ({})".format(
+					_check_in_handler_name(next_check_in) or "team",
+					_check_in_timing_label(next_check_in, image_time, sheet_tz=sheet_tz),
+				)
+			)
+		return "no team check-in matched; nearest were {}".format(", ".join(parts))
+
+	method = selection.get("method")
+	if method == "sequential":
+		return "Runlist sequential burst match ({})".format(
+			_check_in_timing_label(check_in, image_time, sheet_tz=sheet_tz),
+		)
+	if method == "timestamp_over_sequential":
+		sequential_check_in = selection.get("sequential_check_in")
+		return "Runlist rejected sequential match for {} ({}); used timestamp match for {} ({})".format(
+			_check_in_handler_name(sequential_check_in) or "team",
+			_check_in_timing_label(sequential_check_in, image_time, sheet_tz=sheet_tz),
+			_check_in_handler_name(check_in) or "team",
+			_check_in_timing_label(check_in, image_time, sheet_tz=sheet_tz),
+		)
+
+	prior = selection.get("prior_check_in")
+	next_check_in = selection.get("next_check_in")
+	mode = event_mode_checkin_from_time_series(time_series) or "timestamp"
+	if prior is not None and next_check_in is not None:
+		if check_in is next_check_in or check_in == next_check_in:
+			return "{}: matched next check-in for {} ({}) instead of previous check-in for {} ({})".format(
+				mode,
+				_check_in_handler_name(next_check_in) or "team",
+				_check_in_timing_label(next_check_in, image_time, sheet_tz=sheet_tz),
+				_check_in_handler_name(prior) or "team",
+				_check_in_timing_label(prior, image_time, sheet_tz=sheet_tz),
+			)
+		return "{}: matched previous check-in for {} ({}) instead of next check-in for {} ({})".format(
+			mode,
+			_check_in_handler_name(prior) or "team",
+			_check_in_timing_label(prior, image_time, sheet_tz=sheet_tz),
+			_check_in_handler_name(next_check_in) or "team",
+			_check_in_timing_label(next_check_in, image_time, sheet_tz=sheet_tz),
+		)
+	if prior is not None and (check_in is prior or check_in == prior):
+		return "{}: matched latest check-in at or before photo ({})".format(
+			mode,
+			_check_in_timing_label(prior, image_time, sheet_tz=sheet_tz),
+		)
+	if next_check_in is not None and (check_in is next_check_in or check_in == next_check_in):
+		return "{}: matched earliest check-in after photo ({})".format(
+			mode,
+			_check_in_timing_label(next_check_in, image_time, sheet_tz=sheet_tz),
+		)
+	return "{} match".format(mode)
+
+def explain_photo_match(image_time, camera_serial, time_series, *, queue_file=None):
+	if is_before_first_team_check_in(image_time, time_series):
+		return {
+			"match_logic": "before first team check-in",
+			"check_ins": {},
+		}
+
+	sheet_tz = sheet_timezone_from_time_series(time_series)
+	location_path = resolve_match_location_path(
+		image_time,
+		camera_serial,
+		time_series,
+		sheet_tz=sheet_tz,
+	)
+	if location_path is None:
+		return {
+			"match_logic": "no photographer location for camera",
+			"check_ins": {},
+		}
+
+	selection = _select_photo_check_in(
+		image_time,
+		location_path,
+		time_series,
+		queue_file=queue_file,
+		sheet_tz=sheet_tz,
+	)
+	check_ins = {}
+	matched = _photo_summary_check_in_ref(selection["check_in"], image_time, sheet_tz=sheet_tz)
+	if matched is not None:
+		check_ins["matched_check_in"] = matched
+	for key, candidate in (
+		("previous_check_in", selection.get("prior_check_in")),
+		("next_check_in", selection.get("next_check_in")),
+		("sequential_burst_match", selection.get("sequential_check_in")),
+		("timestamp_match", selection.get("timestamp_check_in")),
+	):
+		if candidate is None:
+			continue
+		if key == "timestamp_match" and candidate is selection.get("check_in"):
+			continue
+		ref = _photo_summary_check_in_ref(candidate, image_time, sheet_tz=sheet_tz)
+		if ref is not None:
+			check_ins[key] = ref
+
+	return {
+		"match_logic": _describe_photo_match_logic(selection, image_time, time_series, sheet_tz=sheet_tz),
+		"check_ins": check_ins,
+	}
+
 def resolve_photo_match(image_time, camera_serial, time_series, *, queue_file=None):
 	if is_before_first_team_check_in(image_time, time_series):
 		return None
@@ -2005,39 +2247,14 @@ def resolve_photo_match(image_time, camera_serial, time_series, *, queue_file=No
 	if location_path is None:
 		return None
 
-	check_in = None
-	sequential_check_in = None
-	if queue_file:
-		sequential_check_in = time_series.get("sequential_check_in_by_queue_file", {}).get(queue_file)
-	timestamp_check_in = resolve_check_in(
+	selection = _select_photo_check_in(
 		image_time,
 		location_path,
-		time_series["check_ins_by_location"],
+		time_series,
+		queue_file=queue_file,
 		sheet_tz=sheet_tz,
-		forward_grace_seconds=forward_check_in_grace_seconds(time_series),
 	)
-	if (
-		sequential_check_in is not None
-		and timestamp_check_in is not None
-		and event_mode_checkin_from_time_series(time_series) == "Runlist"
-	):
-		sequential_gap = _check_in_time_gap(image_time, sequential_check_in, sheet_tz=sheet_tz)
-		timestamp_gap = _check_in_time_gap(image_time, timestamp_check_in, sheet_tz=sheet_tz)
-		if (
-			sequential_gap is not None
-			and timestamp_gap is not None
-			and (
-				sequential_gap > CHECK_IN_GRACE_SECONDS
-				or sequential_gap > timestamp_gap + 10
-			)
-		):
-			check_in = timestamp_check_in
-		else:
-			check_in = sequential_check_in
-	elif sequential_check_in is not None:
-		check_in = sequential_check_in
-	else:
-		check_in = timestamp_check_in
+	check_in = selection["check_in"]
 	dock_key = _duel_dock_key(location_path)
 	if dock_key is not None:
 		discipline = resolve_dock_discipline(
@@ -2299,7 +2516,7 @@ def assign_original_filename_keyword(image_json, original_filename):
 		image_json["log"].append("add original filename keyword")
 		logger.info(" ** Original filename: %s", ofn_keyword)
 
-PHOTO_SUMMARY_SCHEMA_VERSION = "1.1.0"
+PHOTO_SUMMARY_SCHEMA_VERSION = "1.3.0"
 
 
 def sanitize_event_name_for_filename(name):
@@ -2336,8 +2553,8 @@ def photo_summary_timestamp(image_time):
 	return str(image_time)
 
 
-def build_photo_summary_entry(queue_file, image_json, match):
-	return {
+def build_photo_summary_entry(queue_file, image_json, match, match_explanation=None):
+	entry = {
 		"image": os.path.basename(queue_file),
 		"timestamp": photo_summary_timestamp(image_json.get("image_time")),
 		"photographer": match.get("photographer") if match else None,
@@ -2346,6 +2563,12 @@ def build_photo_summary_entry(queue_file, image_json, match):
 		"handler": match.get("handler") if match else None,
 		"dog": match.get("dog") if match else None,
 	}
+	if match_explanation:
+		if match_explanation.get("check_ins"):
+			entry["check_ins"] = match_explanation["check_ins"]
+		if match_explanation.get("match_logic"):
+			entry["match_logic"] = match_explanation["match_logic"]
+	return entry
 
 
 def build_photo_summary(time_series, queue_entries):
@@ -2358,7 +2581,13 @@ def build_photo_summary(time_series, queue_entries):
 			time_series,
 			queue_file=queue_file,
 		)
-		photos.append(build_photo_summary_entry(queue_file, image_json, match))
+		match_explanation = explain_photo_match(
+			image_json["image_time"],
+			image_json.get("camera_serial"),
+			time_series,
+			queue_file=queue_file,
+		)
+		photos.append(build_photo_summary_entry(queue_file, image_json, match, match_explanation))
 	return {
 		"schema_version": PHOTO_SUMMARY_SCHEMA_VERSION,
 		"event": time_series.get("event_name"),
