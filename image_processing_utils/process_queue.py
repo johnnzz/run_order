@@ -152,6 +152,8 @@ FORWARD_CHECK_IN_GRACE_SECONDS = 5
 RUNLIST_FORWARD_CHECK_IN_GRACE_SECONDS = CHECK_IN_GRACE_SECONDS
 # Prefer the next check-in when the photo is only a few seconds ahead of the log entry.
 RUNLIST_IMMINENT_FORWARD_MAX_SECONDS = 15
+# Require a longer prior gap before matching the next pre-logged team.
+RUNLIST_MIN_PRIOR_GAP_SECONDS = 60
 # Keep the previous team when the prior check-in was long ago and the next is not imminent.
 RUNLIST_STALE_PRIOR_MIN_SECONDS = 90
 # Check-ins separated by more than this are a pre-batch lead vs a runlist batch cluster.
@@ -1032,7 +1034,7 @@ def format_exiftool_remove_arg(tag, value):
 	escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
 	return '-{}-="{}"'.format(tag, escaped)
 
-def iptc_metadata_args(original_iptc, final_iptc):
+def iptc_metadata_args(original_iptc, final_iptc, *, force_headline_refresh=False):
 	if not final_iptc:
 		return []
 
@@ -1041,7 +1043,14 @@ def iptc_metadata_args(original_iptc, final_iptc):
 	for field, tag in IPTC_FIELD_TAGS.items():
 		new_value = final_iptc.get(field)
 		old_value = original_iptc.get(field)
-		if not new_value or new_value == old_value:
+		if not new_value:
+			continue
+		if field == "headline" and force_headline_refresh:
+			if old_value:
+				args.append(format_exiftool_remove_arg(tag, old_value))
+			args.append(format_exiftool_set_arg(tag, new_value))
+			continue
+		if new_value == old_value:
 			continue
 		if old_value:
 			args.append(format_exiftool_remove_arg(tag, old_value))
@@ -1075,6 +1084,15 @@ def build_processed_filename(image_time, original_filename):
 	base_name = strip_timestamp_prefix(original_filename)
 	return "{}-{}".format(timestamp, base_name)
 
+def _team_match_keywords_changed(original_x_keywords, final_x_keywords):
+	prefixes = ("X-handler:", "X-team:", "X-dog:")
+	def team_keywords(keywords):
+		return {
+			keyword for keyword in keywords
+			if keyword.startswith(prefixes)
+		}
+	return team_keywords(original_x_keywords) != team_keywords(final_x_keywords)
+
 def put_exif(exif_json, filename, output_path=None):
 
 	# if log is empty, we didn't do anything
@@ -1096,6 +1114,10 @@ def put_exif(exif_json, filename, output_path=None):
 		iptc_metadata_args(
 			exif_json.get("original_iptc_metadata"),
 			exif_json.get("iptc_metadata"),
+			force_headline_refresh=_team_match_keywords_changed(
+				original_x_keywords,
+				final_x_keywords,
+			),
 		)
 	)
 
@@ -1619,13 +1641,18 @@ def forward_check_in_grace_seconds(time_series=None):
 def _runlist_prefer_forward_check_in(gap_before, gap_after):
 	before_s = gap_before.total_seconds()
 	after_s = gap_after.total_seconds()
-	# Photos taken during a rapid pre-logged batch stay with the prior team.
-	min_prior_gap_seconds = 30
-	if after_s <= RUNLIST_IMMINENT_FORWARD_MAX_SECONDS and before_s >= min_prior_gap_seconds:
+	if (
+		after_s <= RUNLIST_IMMINENT_FORWARD_MAX_SECONDS
+		and before_s >= RUNLIST_MIN_PRIOR_GAP_SECONDS
+	):
 		return True
 	if before_s > RUNLIST_STALE_PRIOR_MIN_SECONDS and after_s > RUNLIST_IMMINENT_FORWARD_MAX_SECONDS:
 		return False
-	if after_s < before_s and before_s >= min_prior_gap_seconds and before_s / after_s < 2.5:
+	if (
+		after_s < before_s
+		and before_s >= RUNLIST_MIN_PRIOR_GAP_SECONDS
+		and before_s / after_s < 2.5
+	):
 		return True
 	if (
 		after_s >= before_s
