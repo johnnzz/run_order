@@ -148,6 +148,12 @@ CHECK_IN_GRACE_SECONDS = 120
 PHOTO_BURST_GAP_SECONDS = 3
 # QR check-ins may be logged slightly after the jump; match the nearest check-in within this window.
 FORWARD_CHECK_IN_GRACE_SECONDS = 5
+# Runlist jump shots may be logged slightly after the photo; allow matching the next team.
+RUNLIST_FORWARD_CHECK_IN_GRACE_SECONDS = CHECK_IN_GRACE_SECONDS
+# Prefer the next check-in when the photo is only a few seconds ahead of the log entry.
+RUNLIST_IMMINENT_FORWARD_MAX_SECONDS = 15
+# Keep the previous team when the prior check-in was long ago and the next is not imminent.
+RUNLIST_STALE_PRIOR_MIN_SECONDS = 90
 # Check-ins separated by more than this are a pre-batch lead vs a runlist batch cluster.
 CHECK_IN_BATCH_GAP_SECONDS = 120
 
@@ -1605,6 +1611,46 @@ def event_mode_checkin_from_time_series(time_series):
 		return mode.strip()
 	return None
 
+def forward_check_in_grace_seconds(time_series=None):
+	if time_series and event_mode_checkin_from_time_series(time_series) == "Runlist":
+		return RUNLIST_FORWARD_CHECK_IN_GRACE_SECONDS
+	return FORWARD_CHECK_IN_GRACE_SECONDS
+
+def _runlist_prefer_forward_check_in(gap_before, gap_after):
+	before_s = gap_before.total_seconds()
+	after_s = gap_after.total_seconds()
+	# Photos taken during a rapid pre-logged batch stay with the prior team.
+	min_prior_gap_seconds = 30
+	if after_s <= RUNLIST_IMMINENT_FORWARD_MAX_SECONDS and before_s >= min_prior_gap_seconds:
+		return True
+	if before_s > RUNLIST_STALE_PRIOR_MIN_SECONDS and after_s > RUNLIST_IMMINENT_FORWARD_MAX_SECONDS:
+		return False
+	if after_s < before_s and before_s >= min_prior_gap_seconds and before_s / after_s < 2.5:
+		return True
+	if (
+		after_s >= before_s
+		and after_s <= RUNLIST_FORWARD_CHECK_IN_GRACE_SECONDS
+		and before_s <= RUNLIST_FORWARD_CHECK_IN_GRACE_SECONDS
+		and after_s / before_s < 1.15
+	):
+		return True
+	return False
+
+def _check_in_time_gap(image_time, check_in, sheet_tz=None):
+	if check_in is None:
+		return None
+	return abs(
+		(
+			comparison_instant(image_time)
+			- _check_in_instant(check_in, sheet_tz)
+		).total_seconds()
+	)
+
+def _prefer_runlist_forward_check_in(gap_before, gap_after, *, forward_grace_seconds):
+	if forward_grace_seconds <= FORWARD_CHECK_IN_GRACE_SECONDS:
+		return gap_after < gap_before
+	return _runlist_prefer_forward_check_in(gap_before, gap_after)
+
 def sequential_check_in_matching_enabled(time_series, *, lead):
 	"""Runlist burst matching is for pre-logged batches; QR/Self use timestamp matching."""
 	mode = event_mode_checkin_from_time_series(time_series)
@@ -1736,7 +1782,13 @@ def _pick_runlist_check_in_for_burst(burst, runlist_sequence, used_indices, shee
 
 	return min(unused, key=lambda index: (entry_instant(index), index))
 
-def _assign_runlist_bursts_to_sequence(bursts, runlist_sequence, assignments, used_files, sheet_tz):
+def _assign_runlist_bursts_to_sequence(
+	bursts,
+	runlist_sequence,
+	assignments,
+	used_files,
+	sheet_tz,
+):
 	if len(runlist_sequence) > len(bursts):
 		used_indices = set()
 		for burst in bursts:
@@ -1811,7 +1863,15 @@ def build_sequential_check_in_assignments(queue_entries, time_series):
 	time_series["sequential_check_in_by_queue_file"] = assignments
 	return assignments
 
-def resolve_check_in(image_time, location_path, check_ins_by_location, event_tz=None, sheet_tz=None):
+def resolve_check_in(
+	image_time,
+	location_path,
+	check_ins_by_location,
+	event_tz=None,
+	sheet_tz=None,
+	*,
+	forward_grace_seconds=FORWARD_CHECK_IN_GRACE_SECONDS,
+):
 	del event_tz
 	entries = check_ins_by_location.get(location_path, [])
 	if not entries:
@@ -1825,7 +1885,7 @@ def resolve_check_in(image_time, location_path, check_ins_by_location, event_tz=
 		entry for entry in entries
 		if entry_time(entry) <= comparison_time
 	]
-	forward_grace = timedelta(seconds=FORWARD_CHECK_IN_GRACE_SECONDS)
+	forward_grace = timedelta(seconds=forward_grace_seconds)
 	just_after = [
 		entry for entry in entries
 		if comparison_time < entry_time(entry) <= comparison_time + forward_grace
@@ -1835,7 +1895,11 @@ def resolve_check_in(image_time, location_path, check_ins_by_location, event_tz=
 		after = min(just_after, key=entry_time)
 		gap_before = comparison_time - entry_time(before)
 		gap_after = entry_time(after) - comparison_time
-		if gap_after < gap_before:
+		if _prefer_runlist_forward_check_in(
+			gap_before,
+			gap_after,
+			forward_grace_seconds=forward_grace_seconds,
+		):
 			return after
 		return before
 	if at_or_before:
@@ -1915,15 +1979,38 @@ def resolve_photo_match(image_time, camera_serial, time_series, *, queue_file=No
 		return None
 
 	check_in = None
+	sequential_check_in = None
 	if queue_file:
-		check_in = time_series.get("sequential_check_in_by_queue_file", {}).get(queue_file)
-	if check_in is None:
-		check_in = resolve_check_in(
-			image_time,
-			location_path,
-			time_series["check_ins_by_location"],
-			sheet_tz=sheet_tz,
-		)
+		sequential_check_in = time_series.get("sequential_check_in_by_queue_file", {}).get(queue_file)
+	timestamp_check_in = resolve_check_in(
+		image_time,
+		location_path,
+		time_series["check_ins_by_location"],
+		sheet_tz=sheet_tz,
+		forward_grace_seconds=forward_check_in_grace_seconds(time_series),
+	)
+	if (
+		sequential_check_in is not None
+		and timestamp_check_in is not None
+		and event_mode_checkin_from_time_series(time_series) == "Runlist"
+	):
+		sequential_gap = _check_in_time_gap(image_time, sequential_check_in, sheet_tz=sheet_tz)
+		timestamp_gap = _check_in_time_gap(image_time, timestamp_check_in, sheet_tz=sheet_tz)
+		if (
+			sequential_gap is not None
+			and timestamp_gap is not None
+			and (
+				sequential_gap > CHECK_IN_GRACE_SECONDS
+				or sequential_gap > timestamp_gap + 10
+			)
+		):
+			check_in = timestamp_check_in
+		else:
+			check_in = sequential_check_in
+	elif sequential_check_in is not None:
+		check_in = sequential_check_in
+	else:
+		check_in = timestamp_check_in
 	dock_key = _duel_dock_key(location_path)
 	if dock_key is not None:
 		discipline = resolve_dock_discipline(
