@@ -1226,6 +1226,47 @@ def resolve_processed_paths(processed_dir, backup_dir, filename, keywords, *, ou
 	backup_file = os.path.join(backup_base, filename) if backup_base else None
 	return filename, processed_file, backup_file
 
+
+def copy_duel_photo_to_additional_staging_subdirs(
+	source_path,
+	filename,
+	processed_dir,
+	backup_dir,
+	keywords,
+	primary_subdir,
+	*,
+	force=False,
+	safe=False,
+):
+	for subdir in photo_summary_staging_dirs(keywords):
+		if subdir == primary_subdir:
+			continue
+		processed_base = os.path.join(processed_dir, subdir)
+		os.makedirs(processed_base, exist_ok=True)
+		dest_path = os.path.join(processed_base, filename)
+		backup_base = os.path.join(backup_dir, subdir) if backup_dir else None
+		if backup_base:
+			os.makedirs(backup_base, exist_ok=True)
+		if safe:
+			filename, dest_path, backup_path = unique_output_names(
+				processed_base,
+				backup_base,
+				os.path.basename(dest_path),
+			)
+		else:
+			backup_path = os.path.join(backup_base, filename) if backup_base else None
+		dest_path, copied = copy_destination(
+			source_path,
+			dest_path,
+			force=force,
+			safe=False,
+		)
+		if copied:
+			logger.info("* Duel copy to %s", dest_path)
+		if backup_path:
+			copy_destination(source_path, backup_path, force=force, safe=safe)
+
+
 def put_exif(exif_json, filename, output_path=None, *, session=None):
 
 	# if log is empty, we didn't do anything
@@ -3525,6 +3566,17 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 					)
 					if processed:
 						logger.info("* Output: %s", processed_file)
+					if output_mode == OUTPUT_MODE_SUBDIR and duel_keyword is not None:
+						copy_duel_photo_to_additional_staging_subdirs(
+							processed_file,
+							os.path.basename(processed_file),
+							processed_dir,
+							backup_dir,
+							image_json["Keywords"],
+							primary_staging_dir_from_match(match),
+							force=force,
+							safe=safe,
+						)
 					photo_summary_entries.append(
 						build_photo_summary_entry(
 							queue_file,
