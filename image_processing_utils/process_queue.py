@@ -143,24 +143,36 @@ DEFAULT_CAMERA_SAMPLES_DIR = os.path.join(
 TIMESTAMP_PREFIX_RE = re.compile(r"^\d{14,20}-")
 DOCK_LANE_PATTERN = re.compile(r"^Dock\s+(.+?)\s+-\s+Lane\s+(\d+)$", re.IGNORECASE)
 DUELING_DOGS_DISCIPLINE = "dueling dogs"
-# Small grace for discipline selection when camera clock and check-in clocks differ slightly.
+
+# --- Matching timing baselines ---
+#
+# Photo bursts (camera capture):
+#   Frames in a burst are typically <= 0.2s apart (5 fps). The same jump may
+#   include an occasional 1-2s pause before the next frame. Gaps much larger
+#   than that are a new run/team.
+PHOTO_BURST_TYPICAL_INTERVAL_SECONDS = 0.2
+PHOTO_BURST_GAP_SECONDS = 2
+
+# Check-in timestamps (timeseries):
+#   Check-ins are device-timestamped and sorted post-facto. Out-of-order entries
+#   or clock skew should be small and rare.
+CHECK_IN_TIMESTAMP_IMPRECISION_SECONDS = 5
+
+# Wider windows for non-match purposes (discipline selection, runlist batch
+# overlap when photos span the full batch run, sequential-vs-timestamp sanity).
 CHECK_IN_GRACE_SECONDS = 120
-# Photos within this gap are treated as one run/burst (typically 2 frames).
-PHOTO_BURST_GAP_SECONDS = 3
-# QR check-ins may be logged slightly after the jump; match the nearest check-in within this window.
+
+# Forward timestamp match: photo slightly before a logged check-in (QR tap lag).
 FORWARD_CHECK_IN_GRACE_SECONDS = 5
-# Runlist jump shots may be logged slightly after the photo; allow matching the next team.
-RUNLIST_FORWARD_CHECK_IN_GRACE_SECONDS = CHECK_IN_GRACE_SECONDS
-# Prefer the next check-in when the photo is only a few seconds ahead of the log entry.
-RUNLIST_IMMINENT_FORWARD_MAX_SECONDS = 15
-# Require a longer prior gap before matching the next pre-logged team.
-RUNLIST_MIN_PRIOR_GAP_SECONDS = 60
-# When the next check-in is imminent, only forward if the prior gap is much larger.
-RUNLIST_IMMINENT_FORWARD_MIN_RATIO = 6
-# Keep the previous team when the prior check-in was long ago and the next is not imminent.
-RUNLIST_STALE_PRIOR_MIN_SECONDS = 90
-# Check-ins separated by more than this are a pre-batch lead vs a runlist batch cluster.
-CHECK_IN_BATCH_GAP_SECONDS = 120
+
+# Runlist: first jump photo typically arrives a few seconds after check-in, so a
+# photo logged before the next check-in is almost always still the previous run.
+# Forward grace applies only when there is no prior check-in (photo before first log).
+RUNLIST_FORWARD_CHECK_IN_GRACE_SECONDS = CHECK_IN_TIMESTAMP_IMPRECISION_SECONDS
+
+# Pre-logged runlist batches: consecutive entries seconds apart; larger gap
+# starts a new batch cluster or isolates a lead check-in.
+CHECK_IN_BATCH_GAP_SECONDS = 60
 
 # Naive timestamps without an offset (Google Sheets export, EXIF without zone suffix) are
 # interpreted in this timezone. Camera and sheet are Pacific; matching uses UTC instants.
@@ -1643,30 +1655,11 @@ def forward_check_in_grace_seconds(time_series=None):
 		return RUNLIST_FORWARD_CHECK_IN_GRACE_SECONDS
 	return FORWARD_CHECK_IN_GRACE_SECONDS
 
-def _runlist_prefer_forward_check_in(gap_before, gap_after):
-	before_s = gap_before.total_seconds()
-	after_s = gap_after.total_seconds()
-	if (
-		after_s <= RUNLIST_IMMINENT_FORWARD_MAX_SECONDS
-		and before_s >= RUNLIST_MIN_PRIOR_GAP_SECONDS
-		and before_s / after_s >= RUNLIST_IMMINENT_FORWARD_MIN_RATIO
-	):
-		return True
-	if before_s > RUNLIST_STALE_PRIOR_MIN_SECONDS and after_s > RUNLIST_IMMINENT_FORWARD_MAX_SECONDS:
-		return False
-	if (
-		after_s < before_s
-		and before_s >= RUNLIST_MIN_PRIOR_GAP_SECONDS
-		and before_s / after_s < 2.5
-	):
-		return True
-	if (
-		after_s >= before_s
-		and after_s <= RUNLIST_FORWARD_CHECK_IN_GRACE_SECONDS
-		and before_s <= RUNLIST_FORWARD_CHECK_IN_GRACE_SECONDS
-		and after_s / before_s < 1.15
-	):
-		return True
+def _prefer_runlist_forward_check_in(gap_before, gap_after, *, forward_grace_seconds):
+	if forward_grace_seconds <= FORWARD_CHECK_IN_GRACE_SECONDS:
+		return gap_after < gap_before
+	# Runlist: photo before next check-in is still the previous team's run.
+	del gap_before, gap_after
 	return False
 
 def _check_in_time_gap(image_time, check_in, sheet_tz=None):
@@ -1678,11 +1671,6 @@ def _check_in_time_gap(image_time, check_in, sheet_tz=None):
 			- _check_in_instant(check_in, sheet_tz)
 		).total_seconds()
 	)
-
-def _prefer_runlist_forward_check_in(gap_before, gap_after, *, forward_grace_seconds):
-	if forward_grace_seconds <= FORWARD_CHECK_IN_GRACE_SECONDS:
-		return gap_after < gap_before
-	return _runlist_prefer_forward_check_in(gap_before, gap_after)
 
 def sequential_check_in_matching_enabled(time_series, *, lead):
 	"""Runlist burst matching is for pre-logged batches; QR/Self use timestamp matching."""
