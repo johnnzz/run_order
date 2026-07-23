@@ -38,14 +38,16 @@ Options:
   -r, --rating NUM        Set rating on images that have none (omit to leave ratings unchanged).
   --status                Print directory paths and file counts.
   --process               Process files in the queue directory.
-  --log FILE              Log file (default: process_queue-<pid>.log).
+  --log FILE              Write log output to FILE (stdout only when omitted).
   --force                 Always overwrite existing destination files.
   --safe                  Write to _N suffix paths instead of overwriting.
+  --output MODE           Output layout: flat or subdir [default: flat].
   -h, --help              Show this message.
 """
 
 from __future__ import annotations
 
+import bisect
 import copy
 import subprocess
 import hashlib
@@ -69,7 +71,13 @@ except ImportError:  # pragma: no cover - Python < 3.9
 from docopt import docopt
 
 import _run_order_timeseries as rot
+from _exiftool_session import ExifToolSession
 from _graceful_interrupt import abort_if_interrupt_requested, install_graceful_interrupt_handler
+from stage_into_dirs import (
+	UNMATCHED_STAGING_DIR,
+	safe_team_dir_name,
+	staging_dir_names_from_keywords,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -136,10 +144,6 @@ INSPECT_TAGS = IMAGE_DATE_TAGS + EXIF_OFFSET_TAGS + SERIAL_NUMBER_TAGS + (
 	"TransmissionReference",
 )
 CAMERA_MODEL_TAGS = ("CameraModelName", "Model")
-DEFAULT_CAMERA_SAMPLES_DIR = os.path.join(
-	os.path.dirname(os.path.abspath(__file__)),
-	"camera_samples",
-)
 TIMESTAMP_PREFIX_RE = re.compile(r"^\d{14,20}-")
 DOCK_LANE_PATTERN = re.compile(r"^Dock\s+(.+?)\s+-\s+Lane\s+(\d+)$", re.IGNORECASE)
 DUELING_DOGS_DISCIPLINE = "dueling dogs"
@@ -173,6 +177,7 @@ RUNLIST_FORWARD_CHECK_IN_GRACE_SECONDS = CHECK_IN_TIMESTAMP_IMPRECISION_SECONDS
 # Pre-logged runlist batches: consecutive entries seconds apart; larger gap
 # starts a new batch cluster or isolates a lead check-in.
 CHECK_IN_BATCH_GAP_SECONDS = 60
+EXIF_READ_BATCH_SIZE = 100
 
 # Naive timestamps without an offset (Google Sheets export, EXIF without zone suffix) are
 # interpreted in this timezone. Camera and sheet are Pacific; matching uses UTC instants.
@@ -232,14 +237,14 @@ US_STATE_TIMEZONES = {
 	"wy": "America/Denver",
 }
 
-def setup_logging(log_path):
+def setup_logging(log_path=None):
+	handlers = [logging.StreamHandler()]
+	if log_path:
+		handlers.insert(0, logging.FileHandler(log_path, mode="w"))
 	logging.basicConfig(
 		level=logging.INFO,
 		format="%(asctime)s %(levelname)s %(message)s",
-		handlers=[
-			logging.FileHandler(log_path, mode="w"),
-			logging.StreamHandler(),
-		],
+		handlers=handlers,
 		force=True,
 	)
 
@@ -303,8 +308,13 @@ def camera_serial_from_exif(exif_json):
 		)
 	)
 
-def fetch_exif_tags(filename, tags):
+def fetch_exif_tags(filename, tags, *, session=None):
 	tag_args = ["-{}".format(tag) for tag in tags]
+	if session is not None:
+		exif_json = session.read_json(filename, tags)
+		if exif_json is None:
+			logger.warning("Skipping %s: unreadable or non-image file", filename)
+		return exif_json
 	cmd = ["exiftool", "-json"] + tag_args + [filename]
 	cmd_out = run_cmd(cmd)
 	if cmd_out.returncode == 1:
@@ -334,32 +344,11 @@ def first_exif_value(exif_json, *tags):
 def camera_model_from_exif(exif_json):
 	return first_exif_value(exif_json, *CAMERA_MODEL_TAGS)
 
-def camera_sample_basename(model, source_path):
-	ext = os.path.splitext(source_path)[1].lstrip(".")
-	if not ext:
-		ext = "jpg"
-	safe_model = model.replace(" ", "_")
-	return "{}.{}".format(safe_model, ext.lower())
-
-def maybe_save_camera_sample(source_path, model, samples_dir=None):
-	if not model or not source_path:
-		return False
-
-	target_dir = samples_dir or DEFAULT_CAMERA_SAMPLES_DIR
-	os.makedirs(target_dir, exist_ok=True)
-	dest_path = os.path.join(target_dir, camera_sample_basename(model, source_path))
-	if os.path.exists(dest_path):
-		return False
-
-	try:
-		shutil.copy2(source_path, dest_path)
-		logger.info("Saved camera sample %s -> %s", model, dest_path)
-		return True
-	except OSError as exc:
-		logger.warning("Unable to save camera sample for %s: %s", model, exc)
-		return False
-
-def fetch_exif_serial_tags(filename):
+def fetch_exif_serial_tags(filename, *, session=None):
+	tags = ("SerialNumber", "InternalSerialNumber", "BodySerialNumber")
+	if session is not None:
+		exif_json = session.read_json(filename, tags)
+		return exif_json or {}
 	cmd = ["exiftool", "-json", "-SerialNumber", "-InternalSerialNumber", "-BodySerialNumber", filename]
 	cmd_out = run_cmd(cmd)
 	if cmd_out.returncode != 0 or not cmd_out.stdout.strip():
@@ -486,49 +475,40 @@ def image_time_from_exif(exif_json):
 		)
 	)
 
-def get_exif(filename):
-
-	exif_json = fetch_exif_tags(filename, INSPECT_TAGS)
+def normalize_exif_json(exif_json, filename, *, session=None):
 	if exif_json is None:
 		return None
 
-	# save the parsed time
 	exif_json["image_time"] = image_time_from_exif(exif_json)
 
 	try:
 		exif_json["camera_serial"] = camera_serial_from_exif(exif_json)
 	except KeyError:
 		try:
-			exif_json["camera_serial"] = camera_serial_from_exif(fetch_exif_serial_tags(filename))
+			exif_json["camera_serial"] = camera_serial_from_exif(
+				fetch_exif_serial_tags(filename, session=session)
+			)
 		except KeyError:
 			exif_json["camera_serial"] = None
- 
- 	# ensure Keywords is a set
+
 	if "Keywords" in exif_json:
 		image_keywords = exif_json["Keywords"]
 		if isinstance(image_keywords, str):
-			image_keywords = [ image_keywords ]
-		else:
-			image_keywords = image_keywords
+			image_keywords = [image_keywords]
 	else:
-		# if there are no keywords, stub it out
 		image_keywords = list()
 	image_keywords = set(image_keywords)
 	image_keywords.discard(None)
 	exif_json["original_x_keywords"] = x_keywords(image_keywords)
 	exif_json["Keywords"] = image_keywords
 	exif_json["original_iptc_metadata"] = read_iptc_metadata(exif_json)
-
-	# make sure Rating exists
-	if "Rating" in exif_json:
-		image_rating = exif_json["Rating"]
-	else:
-		image_rating = None
-	exif_json["Rating"] = image_rating
-
+	exif_json["Rating"] = exif_json.get("Rating")
 	exif_json["log"] = []
-
 	return exif_json
+
+def get_exif(filename, *, session=None):
+	exif_json = fetch_exif_tags(filename, INSPECT_TAGS, session=session)
+	return normalize_exif_json(exif_json, filename, session=session)
 
 def is_x_keyword(keyword):
 	return isinstance(keyword, str) and keyword.startswith("X-")
@@ -658,12 +638,26 @@ def resolve_dock_lane_check_ins(image_time, dock_key, time_series, event_tz):
 	lane1_path = paths_by_lane.get(1)
 	lane2_path = paths_by_lane.get(2)
 	lane1_check_in = (
-		resolve_check_in(image_time, lane1_path, check_ins_by_location, event_tz, sheet_tz=sheet_tz)
+		resolve_check_in(
+			image_time,
+			lane1_path,
+			check_ins_by_location,
+			event_tz,
+			sheet_tz=sheet_tz,
+			time_series=time_series,
+		)
 		if lane1_path is not None
 		else None
 	)
 	lane2_check_in = (
-		resolve_check_in(image_time, lane2_path, check_ins_by_location, event_tz, sheet_tz=sheet_tz)
+		resolve_check_in(
+			image_time,
+			lane2_path,
+			check_ins_by_location,
+			event_tz,
+			sheet_tz=sheet_tz,
+			time_series=time_series,
+		)
 		if lane2_path is not None
 		else None
 	)
@@ -694,6 +688,7 @@ def resolve_dock_discipline(image_time, dock_key, time_series, event_tz):
 			discipline_entries_by_location,
 			event_tz,
 			sheet_tz=sheet_tz,
+			discipline_index=time_series.get("discipline_index"),
 		)
 		if entry is not None and entry.get("discipline"):
 			lane_entries.append(entry)
@@ -808,13 +803,22 @@ def _duel_dock_key(location_path):
 		return None
 	return parsed[0]
 
-def _duel_dogs_at_time(dock_key, image_time, check_ins_by_location, event_tz):
+def _duel_dogs_at_time(dock_key, image_time, time_series, event_tz):
+	check_ins_by_location = time_series["check_ins_by_location"]
+	sheet_tz = sheet_timezone_from_time_series(time_series)
 	dogs = set()
 	for location_path in check_ins_by_location:
 		parsed = parse_dock_lane_location_name(_location_label(location_path))
 		if parsed is None or parsed[0] != dock_key:
 			continue
-		check_in = resolve_check_in(image_time, location_path, check_ins_by_location, event_tz)
+		check_in = resolve_check_in(
+			image_time,
+			location_path,
+			check_ins_by_location,
+			event_tz,
+			sheet_tz=sheet_tz,
+			time_series=time_series,
+		)
 		dog = check_in.get("dog") if check_in else None
 		if isinstance(dog, str) and dog.strip():
 			dogs.add(dog.strip())
@@ -834,7 +838,7 @@ def sequence_group_key(match, image_time, time_series):
 		dogs = _duel_dogs_at_time(
 			dock_key,
 			image_time,
-			time_series["check_ins_by_location"],
+			time_series,
 			event_timezone_from_time_series(time_series),
 		)
 		if not dogs:
@@ -972,6 +976,7 @@ def build_iptc_headline(match, time_series, duel_keyword):
 	return None
 
 def build_iptc_subjects(time_series, match):
+	match = match or {}
 	candidates = (
 		_iptc_text(time_series.get("event_name")),
 		_iptc_text(time_series.get("event_org")),
@@ -997,23 +1002,22 @@ def build_iptc_source(time_series):
 	return event_name
 
 def build_iptc_metadata(time_series, match, image_json, duel_keyword):
-	if match is None:
-		return None
-
 	metadata = {}
-	headline = build_iptc_headline(match, time_series, duel_keyword)
-	if headline:
-		metadata["headline"] = headline
 
-	photographer = _iptc_text(match.get("photographer"))
-	if photographer:
-		metadata["creator"] = photographer
-		metadata["credit"] = photographer
+	if match is not None:
+		headline = build_iptc_headline(match, time_series, duel_keyword)
+		if headline:
+			metadata["headline"] = headline
 
-	if not existing_copyright(image_json) and photographer:
-		image_time = image_json.get("image_time")
-		year = image_time.year if image_time is not None else datetime.now().year
-		metadata["rights"] = "© {} {}".format(year, photographer)
+		photographer = _iptc_text(match.get("photographer"))
+		if photographer:
+			metadata["creator"] = photographer
+			metadata["credit"] = photographer
+
+		if not existing_copyright(image_json) and photographer:
+			image_time = image_json.get("image_time")
+			year = image_time.year if image_time is not None else datetime.now().year
+			metadata["rights"] = "© {} {}".format(year, photographer)
 
 	image_id = image_id_from_keywords(image_json.get("Keywords", set()))
 	if image_id:
@@ -1049,6 +1053,9 @@ def format_exiftool_remove_arg(tag, value):
 	escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
 	return '-{}-="{}"'.format(tag, escaped)
 
+def format_exiftool_clear_arg(tag):
+	return "-{}=".format(tag)
+
 def iptc_metadata_args(original_iptc, final_iptc, *, replace_all=False, force_headline_refresh=False):
 	if not final_iptc:
 		return []
@@ -1059,6 +1066,13 @@ def iptc_metadata_args(original_iptc, final_iptc, *, replace_all=False, force_he
 		for field, tag in IPTC_FIELD_TAGS.items():
 			old_value = original_iptc.get(field)
 			new_value = final_iptc.get(field)
+			if field == "headline":
+				if new_value:
+					args.append(format_exiftool_clear_arg(tag))
+					args.append(format_exiftool_set_arg(tag, new_value))
+				elif old_value:
+					args.append(format_exiftool_remove_arg(tag, old_value))
+				continue
 			if old_value:
 				args.append(format_exiftool_remove_arg(tag, old_value))
 			if new_value:
@@ -1075,8 +1089,7 @@ def iptc_metadata_args(original_iptc, final_iptc, *, replace_all=False, force_he
 		if not new_value:
 			continue
 		if field == "headline" and force_headline_refresh:
-			if old_value:
-				args.append(format_exiftool_remove_arg(tag, old_value))
+			args.append(format_exiftool_clear_arg(tag))
 			args.append(format_exiftool_set_arg(tag, new_value))
 			continue
 		if new_value == old_value:
@@ -1113,14 +1126,51 @@ def build_processed_filename(image_time, original_filename):
 	base_name = strip_timestamp_prefix(original_filename)
 	return "{}-{}".format(timestamp, base_name)
 
-def put_exif(exif_json, filename, output_path=None):
+OUTPUT_MODE_FLAT = "flat"
+OUTPUT_MODE_SUBDIR = "subdir"
+OUTPUT_MODES = (OUTPUT_MODE_FLAT, OUTPUT_MODE_SUBDIR)
+
+def parse_output_mode(value):
+	if value is None or value == OUTPUT_MODE_FLAT:
+		return OUTPUT_MODE_FLAT
+	if value == OUTPUT_MODE_SUBDIR:
+		return OUTPUT_MODE_SUBDIR
+	raise SystemExit(
+		"Invalid --output value: {} (expected flat or subdir)".format(value)
+	)
+
+def processed_output_subdirectory(keywords, output_mode):
+	if output_mode != OUTPUT_MODE_SUBDIR:
+		return None
+	dir_names = staging_dir_names_from_keywords(list(keywords))
+	dir_name = dir_names[0] if dir_names else UNMATCHED_STAGING_DIR
+	return safe_team_dir_name(dir_name) or UNMATCHED_STAGING_DIR
+
+def resolve_processed_paths(processed_dir, backup_dir, filename, keywords, *, output_mode, safe):
+	subdir = processed_output_subdirectory(keywords, output_mode)
+	if subdir:
+		processed_base = os.path.join(processed_dir, subdir)
+		backup_base = os.path.join(backup_dir, subdir) if backup_dir else None
+		os.makedirs(processed_base, exist_ok=True)
+		if backup_base:
+			os.makedirs(backup_base, exist_ok=True)
+	else:
+		processed_base = processed_dir
+		backup_base = backup_dir
+	if safe:
+		return unique_output_names(processed_base, backup_base, filename)
+	processed_file = os.path.join(processed_base, filename)
+	backup_file = os.path.join(backup_base, filename) if backup_base else None
+	return filename, processed_file, backup_file
+
+def put_exif(exif_json, filename, output_path=None, *, session=None):
 
 	# if log is empty, we didn't do anything
 	if not exif_json["log"]:
 		logger.info("* No changes for %s", filename)
 		return
 
-	cmd = ["exiftool", "-m", "-overwrite_original"]
+	cmd = ["-m", "-overwrite_original"]
 
 	original_x_keywords = exif_json.get("original_x_keywords", set())
 	final_x_keywords = x_keywords(exif_json.get("Keywords", set()))
@@ -1140,10 +1190,16 @@ def put_exif(exif_json, filename, output_path=None):
 
 	if "add default rating" in exif_json["log"]:
 		cmd.append("-rating={}".format(exif_json["Rating"]))
-	cmd.append(filename)
 
-	logger.info("* Running: %s", " ".join(cmd))
-	run_cmd(cmd)
+	logger.info("* Running: exiftool %s %s", " ".join(cmd), filename)
+	if session is not None:
+		result = session.write(cmd, filename)
+		if result.returncode != 0:
+			raise RuntimeError(
+				"exiftool failed for {}: {}".format(filename, result.stderr or result.stdout)
+			)
+	else:
+		run_cmd(["exiftool"] + cmd + [filename])
 	if output_path:
 		logger.info("* Output: %s", output_path)
 
@@ -1469,6 +1525,8 @@ def load_time_series(path, merge_path=None):
 	for entries in discipline_entries_by_location.values():
 		entries.sort(key=lambda item: item["time"])
 
+	sheet_tz = sheet_timezone_from_event(event)
+
 	time_series = {
 		"event_name": _optional_event_metadata_value(event, "name"),
 		"event_org": _optional_event_metadata_value(event, "org"),
@@ -1489,7 +1547,70 @@ def load_time_series(path, merge_path=None):
 		"messages_by_handler": messages_by_handler,
 		"inferred_location_path": None,
 	}
+	time_series["check_in_index"] = _build_check_in_index(
+		check_ins_by_location,
+		sheet_tz=sheet_tz,
+	)
+	time_series["discipline_index"] = _build_discipline_index(
+		discipline_entries_by_location,
+		sheet_tz=sheet_tz,
+	)
+	time_series["photographer_by_serial"] = _build_photographer_by_serial(
+		photographer_entries,
+		sheet_tz=sheet_tz,
+	)
+	time_series["first_team_check_in_instant"] = _first_team_check_in_from_index(
+		time_series["check_in_index"]
+	)
 	return finalize_time_series(time_series)
+
+def _build_check_in_index(check_ins_by_location, *, sheet_tz=None):
+	index = {}
+	for location_path, entries in check_ins_by_location.items():
+		instants = [_check_in_instant(entry, sheet_tz) for entry in entries]
+		index[location_path] = {
+			"entries": entries,
+			"instants": instants,
+		}
+	return index
+
+def _build_discipline_index(discipline_entries_by_location, *, sheet_tz=None):
+	index = {}
+	for location_path, entries in discipline_entries_by_location.items():
+		filtered = [entry for entry in entries if entry.get("discipline")]
+		instants = [
+			comparison_instant(entry["time"], naive_tz=sheet_tz)
+			for entry in filtered
+		]
+		index[location_path] = {
+			"entries": filtered,
+			"instants": instants,
+		}
+	return index
+
+def _build_photographer_by_serial(photographer_entries, *, sheet_tz=None):
+	by_serial = {}
+	for entry in photographer_entries:
+		instant = comparison_instant(entry["time"], naive_tz=sheet_tz)
+		entry["_lookup_instant"] = instant
+		for serial in entry["serials"]:
+			by_serial.setdefault(serial, []).append(entry)
+	for entries in by_serial.values():
+		entries.sort(key=lambda item: item["_lookup_instant"])
+	return by_serial
+
+def _first_team_check_in_from_index(check_in_index):
+	first = None
+	for bucket in check_in_index.values():
+		for instant in bucket.get("instants") or []:
+			if first is None or instant < first:
+				first = instant
+	return first
+
+def _location_lookup_bucket(index, location_path):
+	if index is None:
+		return None
+	return index.get(location_path)
 
 def event_metadata_keywords(time_series):
 	keywords = set()
@@ -1574,6 +1695,7 @@ def resolve_match_location_path(image_time, camera_serial, time_series, *, sheet
 		camera_serial,
 		time_series.get("photographer_entries", []),
 		sheet_tz=sheet_tz,
+		photographer_by_serial=time_series.get("photographer_by_serial"),
 	)
 	if photographer_entry is None:
 		return time_series.get("inferred_location_path")
@@ -1591,12 +1713,42 @@ def resolve_match_location_path(image_time, camera_serial, time_series, *, sheet
 	primary = _primary_team_location_path(time_series)
 	return primary or location_path
 
-def resolve_photographer_entry(image_time, camera_serial, photographer_entries, event_tz=None, sheet_tz=None):
+def resolve_photographer_entry(
+	image_time,
+	camera_serial,
+	photographer_entries,
+	event_tz=None,
+	sheet_tz=None,
+	*,
+	photographer_by_serial=None,
+):
 	del event_tz
 	if not camera_serial:
 		return None
 
 	comparison_time = comparison_instant(image_time)
+	if photographer_by_serial is not None:
+		entries = photographer_by_serial.get(camera_serial, [])
+		if not entries:
+			return None
+		instants = [entry["_lookup_instant"] for entry in entries]
+		idx = bisect.bisect_right(instants, comparison_time) - 1
+		if idx < 0:
+			return None
+		max_time = instants[idx]
+		start = idx
+		while start > 0 and instants[start - 1] == max_time:
+			start -= 1
+		tied = entries[start:idx + 1]
+		if len(tied) == 1:
+			return tied[0]
+
+		def lane_sort_key(entry):
+			parsed = parse_dock_lane_location_name(_location_label(entry["location_path"]))
+			return parsed[1] if parsed is not None else 99
+
+		return min(tied, key=lane_sort_key)
+
 	matches = [
 		entry for entry in photographer_entries
 		if comparison_instant(entry["time"], naive_tz=sheet_tz) <= comparison_time
@@ -1638,8 +1790,10 @@ def first_team_check_in_instant(time_series, sheet_tz=None):
 	return first
 
 def is_before_first_team_check_in(image_time, time_series):
-	sheet_tz = sheet_timezone_from_time_series(time_series)
-	first = first_team_check_in_instant(time_series, sheet_tz=sheet_tz)
+	first = time_series.get("first_team_check_in_instant")
+	if first is None:
+		sheet_tz = sheet_timezone_from_time_series(time_series)
+		first = first_team_check_in_instant(time_series, sheet_tz=sheet_tz)
 	if first is None:
 		return False
 	return comparison_instant(image_time) < first
@@ -1884,6 +2038,53 @@ def build_sequential_check_in_assignments(queue_entries, time_series):
 	time_series["sequential_check_in_by_queue_file"] = assignments
 	return assignments
 
+def _lookup_check_in_bracket(
+	image_time,
+	location_path,
+	time_series,
+	sheet_tz,
+	*,
+	forward_grace_seconds,
+):
+	bucket = _location_lookup_bucket(time_series.get("check_in_index"), location_path)
+	if bucket is None:
+		entries = time_series.get("check_ins_by_location", {}).get(location_path, [])
+		if not entries:
+			return None, None, None
+		instants = [_check_in_instant(entry, sheet_tz) for entry in entries]
+	else:
+		entries = bucket["entries"]
+		instants = bucket["instants"]
+
+	comparison_time = comparison_instant(image_time)
+	prior_index = bisect.bisect_right(instants, comparison_time) - 1
+	prior = entries[prior_index] if prior_index >= 0 else None
+
+	next_check_in = None
+	next_index = bisect.bisect_right(instants, comparison_time)
+	if next_index < len(instants):
+		grace_end = comparison_time + timedelta(seconds=forward_grace_seconds)
+		if instants[next_index] > comparison_time and instants[next_index] <= grace_end:
+			next_check_in = entries[next_index]
+
+	chosen = None
+	if prior is not None and next_check_in is not None:
+		gap_before = comparison_time - instants[prior_index]
+		gap_after = instants[next_index] - comparison_time
+		if _prefer_runlist_forward_check_in(
+			gap_before,
+			gap_after,
+			forward_grace_seconds=forward_grace_seconds,
+		):
+			chosen = next_check_in
+		else:
+			chosen = prior
+	elif prior is not None:
+		chosen = prior
+	elif next_check_in is not None:
+		chosen = next_check_in
+	return chosen, prior, next_check_in
+
 def resolve_check_in(
 	image_time,
 	location_path,
@@ -1892,108 +2093,71 @@ def resolve_check_in(
 	sheet_tz=None,
 	*,
 	forward_grace_seconds=FORWARD_CHECK_IN_GRACE_SECONDS,
+	time_series=None,
 ):
-	del event_tz
-	entries = check_ins_by_location.get(location_path, [])
+	del event_tz, check_ins_by_location
+	if time_series is None:
+		raise ValueError("resolve_check_in requires time_series")
+	chosen, _prior, _next = _lookup_check_in_bracket(
+		image_time,
+		location_path,
+		time_series,
+		sheet_tz,
+		forward_grace_seconds=forward_grace_seconds,
+	)
+	return chosen
+
+def resolve_discipline_entry(
+	image_time,
+	location_path,
+	discipline_entries_by_location,
+	event_tz=None,
+	sheet_tz=None,
+	*,
+	discipline_index=None,
+):
+	del event_tz, discipline_entries_by_location
+	bucket = _location_lookup_bucket(discipline_index, location_path)
+	if bucket is None:
+		return None
+
+	entries = bucket["entries"]
+	instants = bucket["instants"]
 	if not entries:
 		return None
 
-	def entry_time(entry):
-		return _check_in_instant(entry, sheet_tz)
-
-	comparison_time = comparison_instant(image_time)
-	at_or_before = [
-		entry for entry in entries
-		if entry_time(entry) <= comparison_time
-	]
-	forward_grace = timedelta(seconds=forward_grace_seconds)
-	just_after = [
-		entry for entry in entries
-		if comparison_time < entry_time(entry) <= comparison_time + forward_grace
-	]
-	if at_or_before and just_after:
-		before = max(at_or_before, key=entry_time)
-		after = min(just_after, key=entry_time)
-		gap_before = comparison_time - entry_time(before)
-		gap_after = entry_time(after) - comparison_time
-		if _prefer_runlist_forward_check_in(
-			gap_before,
-			gap_after,
-			forward_grace_seconds=forward_grace_seconds,
-		):
-			return after
-		return before
-	if at_or_before:
-		return max(at_or_before, key=entry_time)
-	if just_after:
-		return min(just_after, key=entry_time)
-	return None
-
-def resolve_discipline_entry(image_time, location_path, discipline_entries_by_location, event_tz=None, sheet_tz=None):
-	del event_tz
-	entries = discipline_entries_by_location.get(location_path, [])
 	comparison_time = comparison_instant(image_time)
 	grace_cutoff = comparison_time + timedelta(seconds=CHECK_IN_GRACE_SECONDS)
-	matches = [
-		entry for entry in entries
-		if entry.get("discipline") and comparison_instant(entry["time"], naive_tz=sheet_tz) <= grace_cutoff
-	]
-	if not matches:
+	grace_index = bisect.bisect_right(instants, grace_cutoff)
+	if grace_index <= 0:
 		return None
 
-	at_or_before = [
-		entry for entry in matches
-		if comparison_instant(entry["time"], naive_tz=sheet_tz) <= comparison_time
-	]
-	if at_or_before:
-		return max(at_or_before, key=lambda item: comparison_instant(item["time"], naive_tz=sheet_tz))
+	entries = entries[:grace_index]
+	instants = instants[:grace_index]
+	prior_index = bisect.bisect_right(instants, comparison_time) - 1
+	if prior_index >= 0:
+		return entries[prior_index]
 
-	after_photo = [
-		entry for entry in matches
-		if comparison_instant(entry["time"], naive_tz=sheet_tz) > comparison_time
-	]
-	return min(after_photo, key=lambda item: comparison_instant(item["time"], naive_tz=sheet_tz))
+	next_index = bisect.bisect_right(instants, comparison_time)
+	if next_index < len(entries):
+		return entries[next_index]
+	return None
 
-def resolve_discipline(image_time, location_path, discipline_entries_by_location, event_tz, sheet_tz=None):
+def resolve_discipline(image_time, location_path, discipline_entries_by_location, event_tz, sheet_tz=None, *, time_series=None):
+	discipline_index = None
+	if time_series is not None:
+		discipline_index = time_series.get("discipline_index")
 	entry = resolve_discipline_entry(
 		image_time,
 		location_path,
 		discipline_entries_by_location,
 		event_tz,
 		sheet_tz=sheet_tz,
+		discipline_index=discipline_index,
 	)
 	if entry is None:
 		return None
 	return entry.get("discipline")
-
-def _resolve_check_in_bracket(
-	image_time,
-	location_path,
-	check_ins_by_location,
-	sheet_tz=None,
-	*,
-	forward_grace_seconds=FORWARD_CHECK_IN_GRACE_SECONDS,
-):
-	entries = check_ins_by_location.get(location_path, [])
-	if not entries:
-		return None, None
-
-	def entry_time(entry):
-		return _check_in_instant(entry, sheet_tz)
-
-	comparison_time = comparison_instant(image_time)
-	at_or_before = [
-		entry for entry in entries
-		if entry_time(entry) <= comparison_time
-	]
-	forward_grace = timedelta(seconds=forward_grace_seconds)
-	just_after = [
-		entry for entry in entries
-		if comparison_time < entry_time(entry) <= comparison_time + forward_grace
-	]
-	prior = max(at_or_before, key=entry_time) if at_or_before else None
-	next_check_in = min(just_after, key=entry_time) if just_after else None
-	return prior, next_check_in
 
 def _select_photo_check_in(
 	image_time,
@@ -2007,18 +2171,11 @@ def _select_photo_check_in(
 	sequential_check_in = None
 	if queue_file:
 		sequential_check_in = time_series.get("sequential_check_in_by_queue_file", {}).get(queue_file)
-	timestamp_check_in = resolve_check_in(
+	timestamp_check_in, prior_check_in, next_check_in = _lookup_check_in_bracket(
 		image_time,
 		location_path,
-		time_series["check_ins_by_location"],
-		sheet_tz=sheet_tz,
-		forward_grace_seconds=forward_grace_seconds,
-	)
-	prior_check_in, next_check_in = _resolve_check_in_bracket(
-		image_time,
-		location_path,
-		time_series["check_ins_by_location"],
-		sheet_tz=sheet_tz,
+		time_series,
+		sheet_tz,
 		forward_grace_seconds=forward_grace_seconds,
 	)
 
@@ -2158,33 +2315,7 @@ def _describe_photo_match_logic(selection, image_time, time_series, sheet_tz=Non
 		)
 	return "{} match".format(mode)
 
-def explain_photo_match(image_time, camera_serial, time_series, *, queue_file=None):
-	if is_before_first_team_check_in(image_time, time_series):
-		return {
-			"match_logic": "before first team check-in",
-			"check_ins": {},
-		}
-
-	sheet_tz = sheet_timezone_from_time_series(time_series)
-	location_path = resolve_match_location_path(
-		image_time,
-		camera_serial,
-		time_series,
-		sheet_tz=sheet_tz,
-	)
-	if location_path is None:
-		return {
-			"match_logic": "no photographer location for camera",
-			"check_ins": {},
-		}
-
-	selection = _select_photo_check_in(
-		image_time,
-		location_path,
-		time_series,
-		queue_file=queue_file,
-		sheet_tz=sheet_tz,
-	)
+def _photo_match_explanation_from_selection(selection, image_time, time_series, sheet_tz=None):
 	check_ins = {}
 	matched = _photo_summary_check_in_ref(selection["check_in"], image_time, sheet_tz=sheet_tz)
 	if matched is not None:
@@ -2208,46 +2339,15 @@ def explain_photo_match(image_time, camera_serial, time_series, *, queue_file=No
 		"check_ins": check_ins,
 	}
 
-def resolve_photo_match(image_time, camera_serial, time_series, *, queue_file=None):
-	if is_before_first_team_check_in(image_time, time_series):
-		return None
-
-	event_tz = event_timezone_from_time_series(time_series)
-	sheet_tz = sheet_timezone_from_time_series(time_series)
-	photographer_entry = resolve_photographer_entry(
-		image_time,
-		camera_serial,
-		time_series["photographer_entries"],
-		event_tz,
-		sheet_tz=sheet_tz,
-	)
-	if photographer_entry is None:
-		location_path = time_series.get("inferred_location_path")
-		if location_path is None:
-			return None
-		photographer = None
-	else:
-		location_path = resolve_match_location_path(
-			image_time,
-			camera_serial,
-			time_series,
-			sheet_tz=sheet_tz,
-		)
-		photographer = photographer_entry.get("photographer")
-		if isinstance(photographer, str) and photographer.strip():
-			photographer = photographer.strip()
-		else:
-			photographer = None
-	if location_path is None:
-		return None
-
-	selection = _select_photo_check_in(
-		image_time,
-		location_path,
-		time_series,
-		queue_file=queue_file,
-		sheet_tz=sheet_tz,
-	)
+def _build_photo_match_result(
+	image_time,
+	location_path,
+	photographer,
+	selection,
+	time_series,
+	event_tz,
+	sheet_tz,
+):
 	check_in = selection["check_in"]
 	dock_key = _duel_dock_key(location_path)
 	if dock_key is not None:
@@ -2264,6 +2364,7 @@ def resolve_photo_match(image_time, camera_serial, time_series, *, queue_file=No
 			time_series["discipline_entries_by_location"],
 			event_tz,
 			sheet_tz=sheet_tz,
+			time_series=time_series,
 		)
 	location = format_dock_location_label(location_path, discipline)
 	event_name = time_series.get("event_name")
@@ -2303,6 +2404,91 @@ def resolve_photo_match(image_time, camera_serial, time_series, *, queue_file=No
 		"event": event_name,
 	}
 
+def resolve_photo_match_with_explanation(image_time, camera_serial, time_series, *, queue_file=None):
+	if is_before_first_team_check_in(image_time, time_series):
+		return None, {
+			"match_logic": "before first team check-in",
+			"check_ins": {},
+		}
+
+	event_tz = event_timezone_from_time_series(time_series)
+	sheet_tz = sheet_timezone_from_time_series(time_series)
+	photographer_entry = resolve_photographer_entry(
+		image_time,
+		camera_serial,
+		time_series["photographer_entries"],
+		event_tz,
+		sheet_tz=sheet_tz,
+		photographer_by_serial=time_series.get("photographer_by_serial"),
+	)
+	if photographer_entry is None:
+		location_path = time_series.get("inferred_location_path")
+		if location_path is None:
+			return None, {
+				"match_logic": "no photographer location for camera",
+				"check_ins": {},
+			}
+		photographer = None
+	else:
+		location_path = resolve_match_location_path(
+			image_time,
+			camera_serial,
+			time_series,
+			sheet_tz=sheet_tz,
+		)
+		photographer = photographer_entry.get("photographer")
+		if isinstance(photographer, str) and photographer.strip():
+			photographer = photographer.strip()
+		else:
+			photographer = None
+	if location_path is None:
+		return None, {
+			"match_logic": "no photographer location for camera",
+			"check_ins": {},
+		}
+
+	selection = _select_photo_check_in(
+		image_time,
+		location_path,
+		time_series,
+		queue_file=queue_file,
+		sheet_tz=sheet_tz,
+	)
+	match = _build_photo_match_result(
+		image_time,
+		location_path,
+		photographer,
+		selection,
+		time_series,
+		event_tz,
+		sheet_tz,
+	)
+	explanation = _photo_match_explanation_from_selection(
+		selection,
+		image_time,
+		time_series,
+		sheet_tz=sheet_tz,
+	)
+	return match, explanation
+
+def explain_photo_match(image_time, camera_serial, time_series, *, queue_file=None):
+	_match, explanation = resolve_photo_match_with_explanation(
+		image_time,
+		camera_serial,
+		time_series,
+		queue_file=queue_file,
+	)
+	return explanation
+
+def resolve_photo_match(image_time, camera_serial, time_series, *, queue_file=None):
+	match, _explanation = resolve_photo_match_with_explanation(
+		image_time,
+		camera_serial,
+		time_series,
+		queue_file=queue_file,
+	)
+	return match
+
 def count_files(directory):
 	if not os.path.isdir(directory):
 		return 0
@@ -2320,10 +2506,17 @@ def iter_queue_files(queue_dir):
 			if os.path.isfile(path):
 				yield path
 
-def passthrough_queue_file_reason(filename):
+def is_macos_metadata_file(filename):
 	name = os.path.basename(filename)
-	if name.startswith("._"):
-		return "macOS metadata file"
+	return name.startswith("._")
+
+def delete_macos_metadata_file(queue_file):
+	file = os.path.basename(queue_file)
+	logger.info("Deleting %s (macOS metadata file)", file)
+	os.remove(queue_file)
+
+def passthrough_queue_file_reason(filename):
+	del filename
 	return None
 
 def move_queue_file_unmodified(
@@ -2401,7 +2594,13 @@ def should_write_destination(source_path, dest_path, *, force=False):
 		return True
 	if force:
 		return True
-	return file_md5(source_path) != file_md5(dest_path)
+	source_stat = os.stat(source_path)
+	dest_stat = os.stat(dest_path)
+	if source_stat.st_size != dest_stat.st_size:
+		return True
+	if source_stat.st_mtime != dest_stat.st_mtime:
+		return True
+	return False
 
 def copy_destination(source_path, dest_path, *, force=False, safe=False):
 	if safe:
@@ -2569,13 +2768,7 @@ def build_photo_summary(time_series, queue_entries):
 	build_sequential_check_in_assignments(queue_entries, time_series)
 	photos = []
 	for queue_file, image_json in sorted(queue_entries, key=lambda item: item[1]["image_time"]):
-		match = resolve_photo_match(
-			image_json["image_time"],
-			image_json.get("camera_serial"),
-			time_series,
-			queue_file=queue_file,
-		)
-		match_explanation = explain_photo_match(
+		match, match_explanation = resolve_photo_match_with_explanation(
 			image_json["image_time"],
 			image_json.get("camera_serial"),
 			time_series,
@@ -2590,6 +2783,18 @@ def build_photo_summary(time_series, queue_entries):
 	}
 
 
+def _assemble_photo_summary(time_series, photo_summary_entries):
+	return {
+		"schema_version": PHOTO_SUMMARY_SCHEMA_VERSION,
+		"event": time_series.get("event_name"),
+		"event_code": time_series.get("event_dogsportphoto_code"),
+		"photos": sorted(
+			photo_summary_entries,
+			key=lambda item: item.get("timestamp") or "",
+		),
+	}
+
+
 def write_photo_summary(path, summary):
 	target = Path(path)
 	target.parent.mkdir(parents=True, exist_ok=True)
@@ -2598,7 +2803,7 @@ def write_photo_summary(path, summary):
 		handle.write("\n")
 
 
-def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rating=None, *, force=False, safe=False, timeline_path=None):
+def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rating=None, *, force=False, safe=False, timeline_path=None, output_mode=OUTPUT_MODE_FLAT):
 	install_graceful_interrupt_handler()
 	logger.info("Scanning queue directory %s", queue_dir)
 	queue_files = list(iter_queue_files(queue_dir))
@@ -2616,235 +2821,260 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 		)
 
 	event_keywords = event_metadata_keywords(time_series)
-	queue_entries = []
 	passthrough_files = []
-	logger.info("Examining queue files and reading EXIF metadata...")
-	for index, queue_file in enumerate(queue_files, start=1):
-		log_batch_progress("Examining queue files", index, len(queue_files))
-		file = os.path.basename(queue_file)
-		passthrough_reason = passthrough_queue_file_reason(queue_file)
-		if passthrough_reason:
-			passthrough_files.append((queue_file, passthrough_reason))
-			logger.info("Skipping EXIF for %s (%s)", file, passthrough_reason)
-			abort_if_interrupt_requested(completed_item=file)
+	candidate_files = []
+	deleted_metadata_files = 0
+	for queue_file in queue_files:
+		if is_macos_metadata_file(queue_file):
+			delete_macos_metadata_file(queue_file)
+			deleted_metadata_files += 1
 			continue
-		image_json = get_exif(queue_file)
-		if image_json is None:
-			passthrough_files.append((queue_file, "unrecognized or non-image file"))
-			logger.info("Skipping EXIF for %s (unrecognized or non-image file)", file)
-			abort_if_interrupt_requested(completed_item=file)
-			continue
-		model = camera_model_from_exif(image_json)
-		if model:
-			maybe_save_camera_sample(queue_file, model)
-		queue_entries.append((queue_file, image_json))
-		abort_if_interrupt_requested(completed_item=file)
+		candidate_files.append(queue_file)
 
-	logger.info(
-		"Queue scan complete: %d image(s) to process, %d file(s) to pass through unmodified",
-		len(queue_entries),
-		len(passthrough_files),
-	)
-
-	if passthrough_files:
-		logger.info("Moving pass-through files to processed without modification...")
-		for index, (queue_file, reason) in enumerate(passthrough_files, start=1):
-			file = os.path.basename(queue_file)
-			log_batch_progress("Moving pass-through files", index, len(passthrough_files))
-			logger.info("Pass-through %d/%d: %s", index, len(passthrough_files), file)
-			move_queue_file_unmodified(
-				queue_file,
-				processed_dir,
-				backup_dir,
-				force=force,
-				safe=safe,
-				reason=reason,
-			)
-			logger.info("")
-			abort_if_interrupt_requested(completed_item=file)
-
-	if not queue_entries:
-		if passthrough_files:
-			logger.info(
-				"No processable images in queue; moved %d pass-through file(s) to processed",
-				len(passthrough_files),
-			)
-		else:
-			logger.info("No readable images in queue directory %s", queue_dir)
-		remove_empty_queue_dirs(queue_dir)
-		return
-
-	logger.info("Building sequential check-in assignments...")
-	build_sequential_check_in_assignments(queue_entries, time_series)
-	logger.info("Assigning sequence IDs...")
-	sequence_ids = build_sequence_ids(queue_entries, time_series)
-	logger.info("Processing %d image(s)...", len(queue_entries))
-
-	for index, (queue_file, image_json) in enumerate(queue_entries, start=1):
-		file = os.path.basename(queue_file)
-		queue_relative = os.path.relpath(queue_file, queue_dir)
-		log_batch_progress("Processing images", index, len(queue_entries))
-		logger.info("Processing image %d/%d: %s", index, len(queue_entries), file)
-		if queue_relative != file:
-			logger.info("Processing %s from queue subdirectory %s", file, os.path.dirname(queue_relative))
-
-		log_processing_start(file, image_json)
-
-		if is_before_first_team_check_in(image_json["image_time"], time_series):
-			move_queue_file_unmodified(
-				queue_file,
-				processed_dir,
-				backup_dir,
-				force=force,
-				safe=safe,
-				reason="Before first team check-in",
-			)
-			logger.info("")
-			abort_if_interrupt_requested(completed_item=file)
-			continue
-
-		if default_rating is not None and not image_json["Rating"]:
-			image_json["Rating"] = default_rating
-			image_json["log"].append("add default rating")
-
-		if event_keywords:
-			image_json["Keywords"] = preserve_non_x_keywords(image_json["Keywords"])
-			image_json["Keywords"].update(event_keywords)
-			image_json["log"].append("add event metadata keywords")
-
-		match = resolve_photo_match(
-			image_json["image_time"],
-			image_json.get("camera_serial"),
-			time_series,
-			queue_file=queue_file,
+	if deleted_metadata_files:
+		logger.info(
+			"Deleted %d macOS metadata file(s) from queue",
+			deleted_metadata_files,
 		)
-		duel_keyword = None
-		if match is None:
-			if image_json.get("camera_serial"):
-				logger.warning(
-					"No photographer location found for serial %s at %s",
-					image_json["camera_serial"],
-					image_json["image_time"],
-				)
-			else:
-				logger.warning("No camera serial found in %s", queue_relative)
-		else:
-			match_keywords = set()
-			for field, value in (
-				("photog", match.get("photographer")),
-				("dog", match.get("dog")),
-				("handler", match.get("handler")),
-				("team", match.get("team")),
-				("photoreq", match.get("photo_request")),
-				("msg", match.get("message_to_photographer")),
-				("dis", match.get("discipline")),
-				("event", match.get("event")),
-				("loc", match.get("location")),
-			):
-				keyword = format_keyword(field, value)
-				if keyword:
-					match_keywords.add(keyword)
-			match_keywords.update(keywords_from_org_ids(match.get("org_ids")))
-			duel_keywords = duel_participant_keywords(
-				image_json["image_time"],
-				match,
-				time_series,
-			)
-			if duel_keywords:
-				match_keywords = {
-					keyword
-					for keyword in match_keywords
-					if not keyword.startswith(("X-dog:", "X-handler:", "X-team:"))
-				}
-				match_keywords.update(duel_keywords)
-			if match_keywords:
-				if not event_keywords:
-					image_json["Keywords"] = preserve_non_x_keywords(image_json["Keywords"])
-				image_json["Keywords"].update(match_keywords)
-			duel_keyword = resolve_duel_keyword(
-				image_json["image_time"],
-				match,
-				time_series,
-			)
-			if duel_keyword:
-				image_json["Keywords"].add(duel_keyword)
-				image_json["log"].append("add dueling dogs duel keyword")
-				logger.info(" ** Matched Duel: %s", duel_keyword)
-			sequence_id = sequence_ids.get(queue_file)
-			seq_keyword = format_keyword("seq", sequence_id)
-			if seq_keyword:
-				if not event_keywords and not match_keywords:
-					image_json["Keywords"] = preserve_non_x_keywords(image_json["Keywords"])
-				image_json["Keywords"].add(seq_keyword)
-				image_json["log"].append("add sequence keyword")
-				log_sequence_keyword(sequence_id)
-			if match.get("dog"):
-				image_json["log"].append(
-					"add matching dog from {} via serial {}".format(
-						_location_label(match["location_path"]),
-						image_json.get("camera_serial"),
-					)
-				)
-				log_match_details(match)
-			elif match.get("photographer"):
-				image_json["log"].append(
-					"add photographer from {} via serial {}".format(
-						_location_label(match["location_path"]),
-						image_json.get("camera_serial"),
-					)
-				)
-				log_match_details(match)
-			else:
-				logger.warning(
-					"No check-in found at location %s for %s",
-					_location_label(match["location_path"]),
-					image_json["image_time"],
-				)
+	queue_files = candidate_files
 
-		new_name = build_processed_filename(image_json["image_time"], file)
-		if safe:
-			output_name, processed_file, backup_file = unique_output_names(
+	with ExifToolSession() as exif_session:
+		raw_exif_by_file = {}
+		logger.info("Examining queue files and reading EXIF metadata...")
+		for batch_start in range(0, len(candidate_files), EXIF_READ_BATCH_SIZE):
+			batch = candidate_files[batch_start:batch_start + EXIF_READ_BATCH_SIZE]
+			if not batch:
+				continue
+			log_batch_progress(
+				"Reading EXIF metadata",
+				min(batch_start + len(batch), len(candidate_files)),
+				len(candidate_files),
+			)
+			batch_results = exif_session.read_json_batch(batch, INSPECT_TAGS)
+			for path, raw in zip(batch, batch_results):
+				raw_exif_by_file[path] = raw
+
+		queue_entries = []
+		for index, queue_file in enumerate(queue_files, start=1):
+			log_batch_progress("Examining queue files", index, len(queue_files))
+			file = os.path.basename(queue_file)
+			raw_exif = raw_exif_by_file.get(queue_file)
+			image_json = normalize_exif_json(raw_exif, queue_file, session=exif_session)
+			if image_json is None:
+				passthrough_files.append((queue_file, "unrecognized or non-image file"))
+				logger.info("Skipping EXIF for %s (unrecognized or non-image file)", file)
+				abort_if_interrupt_requested(completed_item=file)
+				continue
+			queue_entries.append((queue_file, image_json))
+			abort_if_interrupt_requested(completed_item=file)
+
+		logger.info(
+			"Queue scan complete: %d image(s) to process, %d file(s) to pass through unmodified",
+			len(queue_entries),
+			len(passthrough_files),
+		)
+
+		if passthrough_files:
+			logger.info("Moving pass-through files to processed without modification...")
+			for index, (queue_file, reason) in enumerate(passthrough_files, start=1):
+				file = os.path.basename(queue_file)
+				log_batch_progress("Moving pass-through files", index, len(passthrough_files))
+				logger.info("Pass-through %d/%d: %s", index, len(passthrough_files), file)
+				move_queue_file_unmodified(
+					queue_file,
+					processed_dir,
+					backup_dir,
+					force=force,
+					safe=safe,
+					reason=reason,
+				)
+				logger.info("")
+				abort_if_interrupt_requested(completed_item=file)
+
+		if not queue_entries:
+			if passthrough_files:
+				logger.info(
+					"No processable images in queue; moved %d pass-through file(s) to processed",
+					len(passthrough_files),
+				)
+			else:
+				logger.info("No readable images in queue directory %s", queue_dir)
+			remove_empty_queue_dirs(queue_dir)
+			return
+
+		logger.info("Building sequential check-in assignments...")
+		build_sequential_check_in_assignments(queue_entries, time_series)
+		logger.info("Assigning sequence IDs...")
+		sequence_ids = build_sequence_ids(queue_entries, time_series)
+		logger.info("Processing %d image(s)...", len(queue_entries))
+		photo_summary_entries = []
+
+		for index, (queue_file, image_json) in enumerate(queue_entries, start=1):
+			file = os.path.basename(queue_file)
+			queue_relative = os.path.relpath(queue_file, queue_dir)
+			log_batch_progress("Processing images", index, len(queue_entries))
+			logger.info("Processing image %d/%d: %s", index, len(queue_entries), file)
+			if queue_relative != file:
+				logger.info("Processing %s from queue subdirectory %s", file, os.path.dirname(queue_relative))
+
+			log_processing_start(file, image_json)
+
+			match, match_explanation = resolve_photo_match_with_explanation(
+				image_json["image_time"],
+				image_json.get("camera_serial"),
+				time_series,
+				queue_file=queue_file,
+			)
+			photo_summary_entries.append(
+				build_photo_summary_entry(queue_file, image_json, match, match_explanation)
+			)
+
+			if is_before_first_team_check_in(image_json["image_time"], time_series):
+				move_queue_file_unmodified(
+					queue_file,
+					processed_dir,
+					backup_dir,
+					force=force,
+					safe=safe,
+					reason="Before first team check-in",
+				)
+				logger.info("")
+				abort_if_interrupt_requested(completed_item=file)
+				continue
+
+			if default_rating is not None and not image_json["Rating"]:
+				image_json["Rating"] = default_rating
+				image_json["log"].append("add default rating")
+
+			if event_keywords:
+				image_json["Keywords"] = preserve_non_x_keywords(image_json["Keywords"])
+				image_json["Keywords"].update(event_keywords)
+				image_json["log"].append("add event metadata keywords")
+
+			duel_keyword = None
+			if match is None:
+				if image_json.get("camera_serial"):
+					logger.warning(
+						"No photographer location found for serial %s at %s",
+						image_json["camera_serial"],
+						image_json["image_time"],
+					)
+				else:
+					logger.warning("No camera serial found in %s", queue_relative)
+			else:
+				match_keywords = set()
+				for field, value in (
+					("photog", match.get("photographer")),
+					("dog", match.get("dog")),
+					("handler", match.get("handler")),
+					("team", match.get("team")),
+					("photoreq", match.get("photo_request")),
+					("msg", match.get("message_to_photographer")),
+					("dis", match.get("discipline")),
+					("event", match.get("event")),
+					("loc", match.get("location")),
+				):
+					keyword = format_keyword(field, value)
+					if keyword:
+						match_keywords.add(keyword)
+				match_keywords.update(keywords_from_org_ids(match.get("org_ids")))
+				duel_keywords = duel_participant_keywords(
+					image_json["image_time"],
+					match,
+					time_series,
+				)
+				if duel_keywords:
+					match_keywords = {
+						keyword
+						for keyword in match_keywords
+						if not keyword.startswith(("X-dog:", "X-handler:", "X-team:"))
+					}
+					match_keywords.update(duel_keywords)
+				if match_keywords:
+					if not event_keywords:
+						image_json["Keywords"] = preserve_non_x_keywords(image_json["Keywords"])
+					image_json["Keywords"].update(match_keywords)
+				duel_keyword = resolve_duel_keyword(
+					image_json["image_time"],
+					match,
+					time_series,
+				)
+				if duel_keyword:
+					image_json["Keywords"].add(duel_keyword)
+					image_json["log"].append("add dueling dogs duel keyword")
+					logger.info(" ** Matched Duel: %s", duel_keyword)
+				sequence_id = sequence_ids.get(queue_file)
+				seq_keyword = format_keyword("seq", sequence_id)
+				if seq_keyword:
+					if not event_keywords and not match_keywords:
+						image_json["Keywords"] = preserve_non_x_keywords(image_json["Keywords"])
+					image_json["Keywords"].add(seq_keyword)
+					image_json["log"].append("add sequence keyword")
+					log_sequence_keyword(sequence_id)
+				if match.get("dog"):
+					image_json["log"].append(
+						"add matching dog from {} via serial {}".format(
+							_location_label(match["location_path"]),
+							image_json.get("camera_serial"),
+						)
+					)
+					log_match_details(match)
+				elif match.get("photographer"):
+					image_json["log"].append(
+						"add photographer from {} via serial {}".format(
+							_location_label(match["location_path"]),
+							image_json.get("camera_serial"),
+						)
+					)
+					log_match_details(match)
+				else:
+					logger.warning(
+						"No check-in found at location %s for %s",
+						_location_label(match["location_path"]),
+						image_json["image_time"],
+					)
+
+			new_name = build_processed_filename(image_json["image_time"], file)
+			output_name, processed_file, backup_file = resolve_processed_paths(
 				processed_dir,
 				backup_dir,
 				new_name,
+				image_json["Keywords"],
+				output_mode=output_mode,
+				safe=safe,
 			)
-		else:
-			output_name = new_name
-			processed_file = os.path.join(processed_dir, output_name)
-			backup_file = os.path.join(backup_dir, output_name) if backup_dir else None
-		logger.info("* Renaming %s", output_name)
-		if backup_dir and backup_file:
-			backup_file, backed_up = copy_destination(
+			logger.info("* Renaming %s", output_name)
+			assign_image_keyword(image_json)
+			assign_original_filename_keyword(image_json, file)
+			assign_iptc_metadata(image_json, time_series, match, duel_keyword)
+			put_exif(image_json, queue_file, processed_file, session=exif_session)
+			if backup_dir and backup_file:
+				backup_file, backed_up = copy_destination(
+					queue_file,
+					backup_file,
+					force=force,
+					safe=safe,
+				)
+				if backed_up:
+					logger.info("* Backing up to %s", backup_file)
+			processed_file, processed = move_destination(
 				queue_file,
-				backup_file,
+				processed_file,
 				force=force,
 				safe=safe,
 			)
-			if backed_up:
-				logger.info("* Backing up to %s", backup_file)
-		assign_image_keyword(image_json)
-		assign_original_filename_keyword(image_json, file)
-		if match is not None:
-			assign_iptc_metadata(image_json, time_series, match, duel_keyword)
-		put_exif(image_json, queue_file, processed_file)
-		processed_file, processed = move_destination(
-			queue_file,
-			processed_file,
-			force=force,
-			safe=safe,
-		)
-		if processed:
-			logger.info("* Output: %s", processed_file)
-		logger.info("")
-		abort_if_interrupt_requested(completed_item=file)
+			if processed:
+				logger.info("* Output: %s", processed_file)
+			logger.info("")
+			abort_if_interrupt_requested(completed_item=file)
 
-	summary = build_photo_summary(time_series, queue_entries)
-	if timeline_path:
-		summary_path = photo_summary_path(timeline_path, time_series)
-	else:
-		summary_path = photo_summary_path(DEFAULT_TIMELINE_FILE, time_series)
-	write_photo_summary(summary_path, summary)
-	logger.info("Wrote photo summary to %s", summary_path)
+		summary = _assemble_photo_summary(time_series, photo_summary_entries)
+		if timeline_path:
+			summary_path = photo_summary_path(timeline_path, time_series)
+		else:
+			summary_path = photo_summary_path(DEFAULT_TIMELINE_FILE, time_series)
+		write_photo_summary(summary_path, summary)
+		logger.info("Wrote photo summary to %s", summary_path)
 
 	remove_empty_queue_dirs(queue_dir)
 
@@ -2854,9 +3084,10 @@ def main():
 		print(__doc__)
 		return
 
-	log_file = args["--log"] or "process_queue-{}.log".format(os.getpid())
+	log_file = args["--log"]
 	setup_logging(log_file)
-	logger.info("Logging to %s", log_file)
+	if log_file:
+		logger.info("Logging to %s", log_file)
 
 	queue_dir = args["--queue"]
 	processed_dir = args["--processed"]
@@ -2875,6 +3106,8 @@ def main():
 		if merge_path:
 			logger.info("Merging secondary time series from %s", merge_path)
 		time_series = load_time_series(timeline_path, merge_path=merge_path)
+		output_mode = parse_output_mode(args["--output"])
+		logger.info("Output layout: %s", output_mode)
 		logger.info("Starting queue processing...")
 		process_queue(
 			queue_dir=queue_dir,
@@ -2885,6 +3118,7 @@ def main():
 			force=args["--force"],
 			safe=args["--safe"],
 			timeline_path=timeline_path,
+			output_mode=output_mode,
 		)
 		logger.info("Queue processing complete")
 		return
