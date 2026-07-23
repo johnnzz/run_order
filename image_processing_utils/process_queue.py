@@ -1818,7 +1818,9 @@ def resolve_match_location_path(image_time, camera_serial, time_series, *, sheet
 	freeshoot_entries = time_series.get("check_ins_by_location", {}).get(location_path, [])
 	window = _location_activity_window(freeshoot_entries, sheet_tz=sheet_tz)
 	comparison_time = comparison_instant(image_time)
-	if window is not None and window[0] <= comparison_time <= window[1]:
+	if window is None:
+		return location_path
+	if window[0] <= comparison_time <= window[1]:
 		return location_path
 
 	primary = _primary_team_location_path(time_series)
@@ -2161,7 +2163,7 @@ def _lookup_check_in_bracket(
 	if bucket is None:
 		entries = time_series.get("check_ins_by_location", {}).get(location_path, [])
 		if not entries:
-			return None, None, None
+			return None, None, None, None
 		instants = [_check_in_instant(entry, sheet_tz) for entry in entries]
 	else:
 		entries = bucket["entries"]
@@ -2172,11 +2174,13 @@ def _lookup_check_in_bracket(
 	prior = entries[prior_index] if prior_index >= 0 else None
 
 	next_check_in = None
+	following_check_in = None
 	next_index = bisect.bisect_right(instants, comparison_time)
-	if next_index < len(instants):
+	if next_index < len(instants) and instants[next_index] > comparison_time:
+		following_check_in = entries[next_index]
 		grace_end = comparison_time + timedelta(seconds=forward_grace_seconds)
-		if instants[next_index] > comparison_time and instants[next_index] <= grace_end:
-			next_check_in = entries[next_index]
+		if instants[next_index] <= grace_end:
+			next_check_in = following_check_in
 
 	chosen = None
 	if prior is not None and next_check_in is not None:
@@ -2194,7 +2198,7 @@ def _lookup_check_in_bracket(
 		chosen = prior
 	elif next_check_in is not None:
 		chosen = next_check_in
-	return chosen, prior, next_check_in
+	return chosen, prior, next_check_in, following_check_in
 
 def resolve_check_in(
 	image_time,
@@ -2209,7 +2213,7 @@ def resolve_check_in(
 	del event_tz, check_ins_by_location
 	if time_series is None:
 		raise ValueError("resolve_check_in requires time_series")
-	chosen, _prior, _next = _lookup_check_in_bracket(
+	chosen, _prior, _next, _following = _lookup_check_in_bracket(
 		image_time,
 		location_path,
 		time_series,
@@ -2282,7 +2286,7 @@ def _select_photo_check_in(
 	sequential_check_in = None
 	if queue_file:
 		sequential_check_in = time_series.get("sequential_check_in_by_queue_file", {}).get(queue_file)
-	timestamp_check_in, prior_check_in, next_check_in = _lookup_check_in_bracket(
+	timestamp_check_in, prior_check_in, next_check_in, following_check_in = _lookup_check_in_bracket(
 		image_time,
 		location_path,
 		time_series,
@@ -2323,6 +2327,7 @@ def _select_photo_check_in(
 		"timestamp_check_in": timestamp_check_in,
 		"prior_check_in": prior_check_in,
 		"next_check_in": next_check_in,
+		"following_check_in": following_check_in,
 		"forward_grace_seconds": forward_grace_seconds,
 	}
 
@@ -2431,9 +2436,10 @@ def _photo_match_explanation_from_selection(selection, image_time, time_series, 
 	matched = _photo_summary_check_in_ref(selection["check_in"], image_time, sheet_tz=sheet_tz)
 	if matched is not None:
 		check_ins["matched_check_in"] = matched
+	summary_next_check_in = selection.get("following_check_in") or selection.get("next_check_in")
 	for key, candidate in (
 		("previous_check_in", selection.get("prior_check_in")),
-		("next_check_in", selection.get("next_check_in")),
+		("next_check_in", summary_next_check_in),
 		("sequential_burst_match", selection.get("sequential_check_in")),
 		("timestamp_match", selection.get("timestamp_check_in")),
 	):
