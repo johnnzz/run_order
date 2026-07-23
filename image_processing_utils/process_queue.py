@@ -1818,7 +1818,9 @@ def resolve_match_location_path(image_time, camera_serial, time_series, *, sheet
 	freeshoot_entries = time_series.get("check_ins_by_location", {}).get(location_path, [])
 	window = _location_activity_window(freeshoot_entries, sheet_tz=sheet_tz)
 	comparison_time = comparison_instant(image_time)
-	if window is not None and window[0] <= comparison_time <= window[1]:
+	if window is None:
+		return location_path
+	if window[0] <= comparison_time <= window[1]:
 		return location_path
 
 	primary = _primary_team_location_path(time_series)
@@ -2161,7 +2163,7 @@ def _lookup_check_in_bracket(
 	if bucket is None:
 		entries = time_series.get("check_ins_by_location", {}).get(location_path, [])
 		if not entries:
-			return None, None, None
+			return None, None, None, None
 		instants = [_check_in_instant(entry, sheet_tz) for entry in entries]
 	else:
 		entries = bucket["entries"]
