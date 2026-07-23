@@ -2209,7 +2209,11 @@ def _lookup_check_in_bracket(
 	if prior is not None and next_check_in is not None:
 		gap_before = comparison_time - instants[prior_index]
 		gap_after = instants[next_index] - comparison_time
-		if _prefer_runlist_forward_check_in(
+		if event_mode_checkin_from_time_series(time_series) == "Runlist":
+			# Pre-logged runlist check-ins: a photo before the next team still
+			# belongs to the previous team even when it is within forward grace.
+			chosen = prior
+		elif _prefer_runlist_forward_check_in(
 			gap_before,
 			gap_after,
 			forward_grace_seconds=forward_grace_seconds,
