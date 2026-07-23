@@ -59,7 +59,7 @@ def normalize_quoted_dog_name(value: str) -> str:
 DEFAULT_PROCESSED_DIR = "./processed"
 DEFAULT_PUBLISH_DIR = "./publish"
 DEFAULT_TIMELINE_FILE = "eventname-ts.json"
-UNMATCHED_STAGING_DIR = "unmatched"
+UNMATCHED_STAGING_DIR = "Unmatched"
 QUOTED_KEYWORD_RE = re.compile(r'"([^"]*)"')
 X_KEYWORD_RE = re.compile(r"X-([^:]+):\s*(.+)", re.IGNORECASE)
 
@@ -383,6 +383,13 @@ def list_files(directory):
 		if not name.startswith(".") and os.path.isfile(os.path.join(directory, name))
 	)
 
+def iter_staging_source_files(processed_dir):
+	for root, _dirs, files in os.walk(processed_dir):
+		for name in sorted(files):
+			if name.startswith("."):
+				continue
+			yield os.path.join(root, name)
+
 def clear_processed_directory(processed_dir):
 	if not os.path.isdir(processed_dir):
 		return
@@ -460,19 +467,19 @@ def stage_processed(processed_dir, publish_dir, timeline_path, *, force=False, s
 	os.makedirs(publish_dir, exist_ok=True)
 	handler_emails = load_handler_emails_from_timeline(timeline_path)
 
-	files = list_files(processed_dir)
-	if not files:
+	source_files = list(iter_staging_source_files(processed_dir))
+	if not source_files:
 		logger.info("Processed directory %s is empty; nothing to stage", processed_dir)
 		return
 
-	logger.info("Staging %d file(s) from %s to %s", len(files), processed_dir, publish_dir)
+	logger.info("Staging %d file(s) from %s to %s", len(source_files), processed_dir, publish_dir)
 
 	clients = {}
 
 	install_graceful_interrupt_handler()
 
-	for name in files:
-		source_path = os.path.join(processed_dir, name)
+	for source_path in source_files:
+		name = os.path.basename(source_path)
 		keywords = fetch_keywords(source_path)
 		if keywords is None:
 			abort_if_interrupt_requested(completed_item=name)
