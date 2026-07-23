@@ -1185,15 +1185,22 @@ def strip_match_x_keywords(keywords):
 	return stripped
 
 
-def processed_output_subdirectory(keywords, output_mode, *, match=None):
-	if output_mode != OUTPUT_MODE_SUBDIR:
-		return None
+def resolved_staging_dir_name(keywords, *, match=None):
 	primary_dir = primary_staging_dir_from_match(match)
 	if primary_dir is not None:
 		return primary_dir
 	dir_names = staging_dir_names_from_keywords(list(keywords))
 	dir_name = dir_names[0] if dir_names else UNMATCHED_STAGING_DIR
 	return safe_team_dir_name(dir_name) or UNMATCHED_STAGING_DIR
+
+
+def processed_output_subdirectory(keywords, output_mode, *, match=None):
+	dir_name = resolved_staging_dir_name(keywords, match=match)
+	if output_mode == OUTPUT_MODE_SUBDIR:
+		return dir_name
+	if dir_name == UNMATCHED_STAGING_DIR:
+		return UNMATCHED_STAGING_DIR
+	return None
 
 
 def primary_staging_dir_from_match(match):
