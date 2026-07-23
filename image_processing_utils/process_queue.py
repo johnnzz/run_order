@@ -1800,6 +1800,24 @@ def _primary_team_location_path(time_series):
 			best_path = location_path
 	return best_path
 
+def _active_dock_location_path_for_photo(image_time, time_series, *, sheet_tz=None):
+	comparison_time = comparison_instant(image_time)
+	grace = timedelta(seconds=CHECK_IN_GRACE_SECONDS)
+	best_path = None
+	best_instant = None
+	for location_path, entries in time_series.get("check_ins_by_location", {}).items():
+		if _is_freeshoot_location_path(location_path):
+			continue
+		for entry in entries:
+			if not _is_assignable_team_check_in(entry):
+				continue
+			instant = _check_in_instant(entry, sheet_tz)
+			if instant - grace <= comparison_time <= instant + grace:
+				if best_instant is None or instant > best_instant:
+					best_instant = instant
+					best_path = location_path
+	return best_path
+
 def resolve_match_location_path(image_time, camera_serial, time_series, *, sheet_tz=None):
 	photographer_entry = resolve_photographer_entry(
 		image_time,
@@ -1815,7 +1833,15 @@ def resolve_match_location_path(image_time, camera_serial, time_series, *, sheet
 	if not _is_freeshoot_location_path(location_path):
 		return location_path
 
-	# Photographer check-in defines the active location until they check in elsewhere.
+	dock_path = _active_dock_location_path_for_photo(
+		image_time,
+		time_series,
+		sheet_tz=sheet_tz,
+	)
+	if dock_path is not None:
+		return dock_path
+
+	# Photographer check-in defines freeshoot until dock team activity or a check-in elsewhere.
 	return location_path
 
 def resolve_photographer_entry(
@@ -1930,6 +1956,11 @@ def _check_in_time_gap(image_time, check_in, sheet_tz=None):
 			- _check_in_instant(check_in, sheet_tz)
 		).total_seconds()
 	)
+
+def _photo_is_before_check_in(image_time, check_in, sheet_tz=None):
+	if check_in is None:
+		return False
+	return comparison_instant(image_time) < _check_in_instant(check_in, sheet_tz)
 
 def sequential_check_in_matching_enabled(time_series, *, lead):
 	"""Runlist burst matching is for pre-logged batches; QR/Self use timestamp matching."""
@@ -2293,21 +2324,25 @@ def _select_photo_check_in(
 		and timestamp_check_in is not None
 		and event_mode_checkin_from_time_series(time_series) == "Runlist"
 	):
-		sequential_gap = _check_in_time_gap(image_time, sequential_check_in, sheet_tz=sheet_tz)
-		timestamp_gap = _check_in_time_gap(image_time, timestamp_check_in, sheet_tz=sheet_tz)
-		if (
-			sequential_gap is not None
-			and timestamp_gap is not None
-			and (
-				sequential_gap > CHECK_IN_GRACE_SECONDS
-				or sequential_gap > timestamp_gap + 10
-			)
-		):
+		if _photo_is_before_check_in(image_time, sequential_check_in, sheet_tz=sheet_tz):
 			check_in = timestamp_check_in
 			method = "timestamp_over_sequential"
 		else:
-			check_in = sequential_check_in
-			method = "sequential"
+			sequential_gap = _check_in_time_gap(image_time, sequential_check_in, sheet_tz=sheet_tz)
+			timestamp_gap = _check_in_time_gap(image_time, timestamp_check_in, sheet_tz=sheet_tz)
+			if (
+				sequential_gap is not None
+				and timestamp_gap is not None
+				and (
+					sequential_gap > CHECK_IN_GRACE_SECONDS
+					or sequential_gap > timestamp_gap + 10
+				)
+			):
+				check_in = timestamp_check_in
+				method = "timestamp_over_sequential"
+			else:
+				check_in = sequential_check_in
+				method = "sequential"
 	elif sequential_check_in is not None:
 		check_in = sequential_check_in
 		method = "sequential"
@@ -3170,7 +3205,10 @@ def photo_summary_relative_processed_path(processed_file, processed_dir):
 	return relative.replace(os.sep, "/")
 
 
-def photo_summary_staging_dirs(keywords):
+def photo_summary_staging_dirs(keywords, *, match=None):
+	primary = primary_staging_dir_from_match(match)
+	if primary:
+		return [primary]
 	dir_names = staging_dir_names_from_keywords(list(keywords))
 	staging_dirs = []
 	for dir_name in dir_names:
@@ -3455,7 +3493,10 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 									processed_file,
 									processed_dir,
 								),
-								staging_dirs=photo_summary_staging_dirs(image_json.get("Keywords") or []),
+								staging_dirs=photo_summary_staging_dirs(
+									image_json.get("Keywords") or [],
+									match=match,
+								),
 								disposition="before_first_check_in",
 							)
 						)
@@ -3609,7 +3650,10 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 								processed_file,
 								processed_dir,
 							),
-							staging_dirs=photo_summary_staging_dirs(image_json["Keywords"]),
+							staging_dirs=photo_summary_staging_dirs(
+								image_json["Keywords"],
+								match=match,
+							),
 							disposition="tagged",
 						)
 					)
