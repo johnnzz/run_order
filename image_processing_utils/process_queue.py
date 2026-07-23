@@ -42,6 +42,7 @@ Options:
   --force                 Always overwrite existing destination files.
   --safe                  Write to _N suffix paths instead of overwriting.
   --output MODE           Output layout: flat or subdir [default: flat].
+  --quiet                 Print one tab-separated line per photo to stdout.
   -h, --help              Show this message.
 """
 
@@ -238,10 +239,16 @@ US_STATE_TIMEZONES = {
 	"wy": "America/Denver",
 }
 
-def setup_logging(log_path=None):
-	handlers = [logging.StreamHandler()]
+def setup_logging(log_path=None, *, quiet=False):
+	handlers = []
 	if log_path:
-		handlers.insert(0, logging.FileHandler(log_path, mode="w"))
+		handlers.append(logging.FileHandler(log_path, mode="w"))
+	if not quiet:
+		handlers.append(logging.StreamHandler())
+	elif not log_path:
+		stream = logging.StreamHandler()
+		stream.setLevel(logging.ERROR)
+		handlers.append(stream)
 	logging.basicConfig(
 		level=logging.INFO,
 		format="%(asctime)s %(levelname)s %(message)s",
@@ -2672,6 +2679,30 @@ def log_processing_start(file, image_json):
 	logger.info(" ** Existing Rating: %s", image_json["Rating"])
 	logger.info(" ** Image time: %s", image_json["image_time"])
 
+def format_quiet_photo_time(image_time):
+	if image_time is None:
+		return ""
+	if hasattr(image_time, "strftime"):
+		stamp = image_time.strftime("%Y-%m-%d %H:%M:%S")
+		microsecond = getattr(image_time, "microsecond", 0)
+		if microsecond:
+			stamp += ".{:06d}".format(microsecond)
+		return stamp
+	return str(image_time)
+
+def format_quiet_photo_line(queue_file, image_json, match):
+	fields = (
+		format_quiet_photo_time(image_json.get("image_time")),
+		os.path.basename(queue_file),
+		(match or {}).get("handler") or "",
+		(match or {}).get("dog") or "",
+		(match or {}).get("discipline") or "",
+	)
+	return "\t".join(str(field) for field in fields)
+
+def print_quiet_photo_line(queue_file, image_json, match):
+	print(format_quiet_photo_line(queue_file, image_json, match), flush=True)
+
 def log_match_details(match):
 	logger.info(" ** Matched Location: %s", match.get("location") or _location_label(match["location_path"]))
 	if match.get("photographer"):
@@ -3071,7 +3102,7 @@ def write_photo_summary(path, summary):
 		handle.write("\n")
 
 
-def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rating=None, *, force=False, safe=False, timeline_path=None, output_mode=OUTPUT_MODE_FLAT):
+def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rating=None, *, force=False, safe=False, timeline_path=None, output_mode=OUTPUT_MODE_FLAT, quiet=False):
 	install_graceful_interrupt_handler()
 	processing_started = time.perf_counter()
 	logger.info("Scanning queue directory %s", queue_dir)
@@ -3181,12 +3212,13 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 		for index, (queue_file, image_json) in enumerate(queue_entries, start=1):
 			file = os.path.basename(queue_file)
 			queue_relative = os.path.relpath(queue_file, queue_dir)
-			log_batch_progress("Processing images", index, len(queue_entries))
-			logger.info("Processing image %d/%d: %s", index, len(queue_entries), file)
-			if queue_relative != file:
-				logger.info("Processing %s from queue subdirectory %s", file, os.path.dirname(queue_relative))
+			if not quiet:
+				log_batch_progress("Processing images", index, len(queue_entries))
+				logger.info("Processing image %d/%d: %s", index, len(queue_entries), file)
+				if queue_relative != file:
+					logger.info("Processing %s from queue subdirectory %s", file, os.path.dirname(queue_relative))
 
-			log_processing_start(file, image_json)
+				log_processing_start(file, image_json)
 
 			match, match_explanation = resolve_photo_match_with_explanation(
 				image_json["image_time"],
@@ -3194,6 +3226,8 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 				time_series,
 				queue_file=queue_file,
 			)
+			if quiet:
+				print_quiet_photo_line(queue_file, image_json, match)
 			photo_summary_entries.append(
 				build_photo_summary_entry(queue_file, image_json, match, match_explanation)
 			)
@@ -3207,7 +3241,8 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 					safe=safe,
 					reason="Before first team check-in",
 				)
-				logger.info("")
+				if not quiet:
+					logger.info("")
 				abort_if_interrupt_requested(completed_item=file)
 				continue
 
@@ -3334,7 +3369,8 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 			)
 			if processed:
 				logger.info("* Output: %s", processed_file)
-			logger.info("")
+			if not quiet:
+				logger.info("")
 			abort_if_interrupt_requested(completed_item=file)
 
 		summary = _assemble_photo_summary(
@@ -3358,7 +3394,8 @@ def main():
 		return
 
 	log_file = args["--log"]
-	setup_logging(log_file)
+	quiet = bool(args["--quiet"])
+	setup_logging(log_file, quiet=quiet)
 	if log_file:
 		logger.info("Logging to %s", log_file)
 
@@ -3371,17 +3408,19 @@ def main():
 			raise SystemExit("Cannot use --force and --safe together")
 		timeline_path = args["--timeline"] or DEFAULT_TIMELINE_FILE
 		merge_path = args["--timeline2"] or None
-		logger.info("Queue directory: %s", queue_dir)
-		logger.info("Processed directory: %s", processed_dir)
-		if backup_dir:
-			logger.info("Backup directory: %s", backup_dir)
-		logger.info("Loading time series from %s", timeline_path)
-		if merge_path:
-			logger.info("Merging secondary time series from %s", merge_path)
+		if not quiet:
+			logger.info("Queue directory: %s", queue_dir)
+			logger.info("Processed directory: %s", processed_dir)
+			if backup_dir:
+				logger.info("Backup directory: %s", backup_dir)
+			logger.info("Loading time series from %s", timeline_path)
+			if merge_path:
+				logger.info("Merging secondary time series from %s", merge_path)
 		time_series = load_time_series(timeline_path, merge_path=merge_path)
 		output_mode = parse_output_mode(args["--output"])
-		logger.info("Output layout: %s", output_mode)
-		logger.info("Starting queue processing...")
+		if not quiet:
+			logger.info("Output layout: %s", output_mode)
+			logger.info("Starting queue processing...")
 		process_queue(
 			queue_dir=queue_dir,
 			processed_dir=processed_dir,
@@ -3392,8 +3431,10 @@ def main():
 			safe=args["--safe"],
 			timeline_path=timeline_path,
 			output_mode=output_mode,
+			quiet=quiet,
 		)
-		logger.info("Queue processing complete")
+		if not quiet:
+			logger.info("Queue processing complete")
 		return
 
 	print_status(queue_dir, processed_dir, backup_dir)
