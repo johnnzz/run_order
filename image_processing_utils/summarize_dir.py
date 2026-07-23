@@ -29,6 +29,8 @@ from datetime import datetime, timedelta, timezone
 
 from docopt import docopt
 
+from _graceful_interrupt import abort_if_interrupt_requested, install_graceful_interrupt_handler
+
 try:
 	from zoneinfo import ZoneInfo
 except ImportError:  # pragma: no cover - Python < 3.9
@@ -404,12 +406,15 @@ def summarize_directory(root_dir):
 		raise FileNotFoundError("Directory not found: {}".format(root_dir))
 
 	current_dir = None
+	install_graceful_interrupt_handler()
 	for dirpath, name, path in iter_files(root_dir):
 		try:
 			exif_json = fetch_exif(path)
 		except (RuntimeError, json.JSONDecodeError):
+			abort_if_interrupt_requested(completed_item=path)
 			continue
 		if exif_json is None:
+			abort_if_interrupt_requested(completed_item=path)
 			continue
 
 		if dirpath != current_dir:
@@ -435,6 +440,7 @@ def summarize_directory(root_dir):
 		keywords = format_keywords(exif_json.get("Keywords"))
 		for line in format_keyword_lines(keywords):
 			print("{}{}".format(DETAIL_INDENT, line))
+		abort_if_interrupt_requested(completed_item=path)
 
 def main():
 	if len(sys.argv) == 1:
