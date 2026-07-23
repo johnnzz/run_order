@@ -8,6 +8,8 @@ import subprocess
 import threading
 from types import SimpleNamespace
 
+from _graceful_interrupt import abort_if_interrupt_requested, interrupt_requested
+
 logger = logging.getLogger(__name__)
 
 
@@ -65,6 +67,8 @@ class ExifToolSession:
 		while True:
 			line = self._proc.stdout.readline()
 			if not line:
+				if interrupt_requested():
+					abort_if_interrupt_requested()
 				raise RuntimeError("ExifTool closed stdout unexpectedly")
 			if line.strip() == b"{ready}":
 				break
@@ -73,15 +77,22 @@ class ExifToolSession:
 
 	def execute(self, args: list[str]) -> SimpleNamespace:
 		"""Send arguments plus ``-execute``; return stdout payload and stderr."""
-		with self._lock:
-			if self._proc is None or self._proc.stdin is None:
-				raise RuntimeError("ExifTool session is not running")
-			for arg in args:
-				self._proc.stdin.write(arg.encode("utf-8"))
-				self._proc.stdin.write(b"\n")
-			self._proc.stdin.write(b"-execute\n")
-			self._proc.stdin.flush()
-		stdout = self._read_until_ready()
+		try:
+			with self._lock:
+				if self._proc is None or self._proc.stdin is None:
+					raise RuntimeError("ExifTool session is not running")
+				for arg in args:
+					self._proc.stdin.write(arg.encode("utf-8"))
+					self._proc.stdin.write(b"\n")
+				self._proc.stdin.write(b"-execute\n")
+				self._proc.stdin.flush()
+			stdout = self._read_until_ready()
+		except SystemExit:
+			raise
+		except OSError:
+			if interrupt_requested():
+				abort_if_interrupt_requested()
+			raise
 		text_out = stdout.decode("utf-8", errors="replace").strip()
 		return SimpleNamespace(
 			stdout=text_out,

@@ -74,7 +74,7 @@ from docopt import docopt
 
 import _run_order_timeseries as rot
 from _exiftool_session import ExifToolSession
-from _graceful_interrupt import abort_if_interrupt_requested, install_graceful_interrupt_handler
+from _graceful_interrupt import abort_if_interrupt_requested, install_graceful_interrupt_handler, interrupt_requested
 from stage_into_dirs import (
 	UNMATCHED_STAGING_DIR,
 	safe_team_dir_name,
@@ -1213,14 +1213,21 @@ def put_exif(exif_json, filename, output_path=None, *, session=None):
 		cmd.append("-rating={}".format(exif_json["Rating"]))
 
 	logger.info("* Running: exiftool %s %s", " ".join(cmd), filename)
-	if session is not None:
-		result = session.write(cmd, filename)
-		if result.returncode != 0:
-			raise RuntimeError(
-				"exiftool failed for {}: {}".format(filename, result.stderr or result.stdout)
-			)
-	else:
-		run_cmd(["exiftool"] + cmd + [filename])
+	try:
+		if session is not None:
+			result = session.write(cmd, filename)
+			if result.returncode != 0:
+				raise RuntimeError(
+					"exiftool failed for {}: {}".format(filename, result.stderr or result.stdout)
+				)
+		else:
+			run_cmd(["exiftool"] + cmd + [filename])
+	except SystemExit:
+		raise
+	except RuntimeError:
+		if interrupt_requested():
+			abort_if_interrupt_requested()
+		raise
 	if output_path:
 		logger.info("* Output: %s", output_path)
 
@@ -3453,4 +3460,9 @@ def main():
 	print_status(queue_dir, processed_dir, backup_dir)
 
 if __name__ == "__main__":
-	main()
+	try:
+		main()
+	except SystemExit as exc:
+		if exc.code == 130:
+			raise SystemExit(130) from None
+		raise
