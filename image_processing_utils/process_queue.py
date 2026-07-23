@@ -62,6 +62,7 @@ from pathlib import Path
 from typing import Any
 import os
 import shutil
+import time
 
 try:
 	from zoneinfo import ZoneInfo
@@ -2709,7 +2710,269 @@ def assign_original_filename_keyword(image_json, original_filename):
 		image_json["log"].append("add original filename keyword")
 		logger.info(" ** Original filename: %s", ofn_keyword)
 
-PHOTO_SUMMARY_SCHEMA_VERSION = "1.3.0"
+PHOTO_SUMMARY_SCHEMA_VERSION = "1.4.0"
+
+
+def _parse_summary_timestamp(value):
+	if value is None:
+		return None
+	if isinstance(value, datetime):
+		return value
+	text = str(value).strip()
+	if not text:
+		return None
+	try:
+		return datetime.fromisoformat(text.replace("Z", "+00:00"))
+	except ValueError:
+		return None
+
+
+def _round_stat(value, places=3):
+	if value is None:
+		return None
+	return round(float(value), places)
+
+
+def _numeric_summary(values, *, exclude_outliers=False):
+	cleaned = [float(value) for value in values if value is not None]
+	if not cleaned:
+		return {"sample_count": 0}
+
+	outliers_removed = 0
+	if exclude_outliers and len(cleaned) >= 4:
+		sorted_values = sorted(cleaned)
+		q1_index = len(sorted_values) // 4
+		q3_index = (3 * len(sorted_values)) // 4
+		q1 = sorted_values[q1_index]
+		q3 = sorted_values[q3_index]
+		iqr = q3 - q1
+		lower = q1 - 1.5 * iqr
+		upper = q3 + 1.5 * iqr
+		filtered = [value for value in cleaned if lower <= value <= upper]
+		outliers_removed = len(cleaned) - len(filtered)
+		if filtered:
+			cleaned = filtered
+
+	cleaned.sort()
+	count = len(cleaned)
+	if count == 1:
+		median = cleaned[0]
+	else:
+		mid = count // 2
+		median = cleaned[mid] if count % 2 else (cleaned[mid - 1] + cleaned[mid]) / 2
+
+	summary = {
+		"sample_count": count,
+		"minimum": _round_stat(cleaned[0]),
+		"maximum": _round_stat(cleaned[-1]),
+		"average": _round_stat(sum(cleaned) / count),
+		"median": _round_stat(median),
+	}
+	if exclude_outliers and outliers_removed:
+		summary["outliers_removed"] = outliers_removed
+	return summary
+
+
+def _photo_run_key(photo):
+	check_ins = photo.get("check_ins") or {}
+	matched = check_ins.get("matched_check_in") or {}
+	handler = photo.get("handler")
+	if not handler:
+		return None
+	return (
+		photo.get("location"),
+		handler,
+		photo.get("dog"),
+		matched.get("check_in_timestamp"),
+	)
+
+
+def _group_photos_into_runs(photos):
+	sorted_photos = sorted(photos, key=lambda item: item.get("timestamp") or "")
+	runs = []
+	current_run = []
+	current_key = None
+	for photo in sorted_photos:
+		key = _photo_run_key(photo)
+		if key is None:
+			if current_run:
+				runs.append(current_run)
+				current_run = []
+			current_key = None
+			continue
+		if key != current_key:
+			if current_run:
+				runs.append(current_run)
+			current_run = [photo]
+			current_key = key
+		else:
+			current_run.append(photo)
+	if current_run:
+		runs.append(current_run)
+	return runs
+
+
+def _match_logic_category(match_logic):
+	if not match_logic:
+		return "unknown"
+	if match_logic == "before first team check-in":
+		return "before_first_check_in"
+	if "no photographer location" in match_logic:
+		return "no_photographer_location"
+	if match_logic.startswith("no team check-in"):
+		return "no_team_check_in"
+	if "Runlist sequential burst match" in match_logic:
+		return "runlist_sequential"
+	if "Runlist rejected sequential" in match_logic:
+		return "runlist_timestamp_override"
+	if "matched next check-in" in match_logic:
+		return "forward_to_next_check_in"
+	if "matched previous check-in" in match_logic or "matched latest check-in" in match_logic:
+		return "prior_check_in"
+	if "matched earliest check-in after photo" in match_logic:
+		return "next_check_in"
+	return "other"
+
+
+def _check_in_to_first_photo_seconds(photo):
+	check_ins = photo.get("check_ins") or {}
+	matched = check_ins.get("matched_check_in") or {}
+	if matched.get("photo_at_same_time_as_check_in"):
+		return 0.0
+	if "photo_after_check_in_seconds" in matched:
+		return matched["photo_after_check_in_seconds"]
+	if "photo_before_check_in_seconds" in matched:
+		return -matched["photo_before_check_in_seconds"]
+	first_time = _parse_summary_timestamp(photo.get("timestamp"))
+	check_in_time = _parse_summary_timestamp(matched.get("check_in_timestamp"))
+	if first_time is None or check_in_time is None:
+		return None
+	return (first_time - check_in_time).total_seconds()
+
+
+def _last_photo_to_next_check_in_seconds(photo, *, next_run=None):
+	check_ins = photo.get("check_ins") or {}
+	next_check_in = check_ins.get("next_check_in") or {}
+	if "photo_before_check_in_seconds" in next_check_in:
+		return next_check_in["photo_before_check_in_seconds"]
+	if next_run:
+		next_matched = (next_run[0].get("check_ins") or {}).get("matched_check_in") or {}
+		next_time = _parse_summary_timestamp(next_matched.get("check_in_timestamp"))
+		last_time = _parse_summary_timestamp(photo.get("timestamp"))
+		if last_time is not None and next_time is not None:
+			gap = (next_time - last_time).total_seconds()
+			return gap if gap >= 0 else None
+	last_time = _parse_summary_timestamp(photo.get("timestamp"))
+	next_time = _parse_summary_timestamp(next_check_in.get("check_in_timestamp"))
+	if last_time is None or next_time is None:
+		return None
+	gap = (next_time - last_time).total_seconds()
+	return gap if gap >= 0 else None
+
+
+def build_photo_summary_statistics(photos, *, processing_seconds=None):
+	photos = photos or []
+	stats = {
+		"photo_count": len(photos),
+	}
+
+	if processing_seconds is not None:
+		processing = {
+			"wall_seconds": _round_stat(processing_seconds),
+		}
+		if processing_seconds > 0 and photos:
+			processing["photos_per_second"] = _round_stat(len(photos) / processing_seconds)
+		stats["processing"] = processing
+
+	matched_photos = [photo for photo in photos if photo.get("handler")]
+	match_logic_counts = {}
+	location_counts = {}
+	for photo in photos:
+		category = _match_logic_category(photo.get("match_logic"))
+		match_logic_counts[category] = match_logic_counts.get(category, 0) + 1
+		location = photo.get("location")
+		if location:
+			location_counts[location] = location_counts.get(location, 0) + 1
+
+	stats["matching"] = {
+		"matched_photo_count": len(matched_photos),
+		"unmatched_photo_count": len(photos) - len(matched_photos),
+		"match_logic_categories": dict(sorted(match_logic_counts.items())),
+		"photos_by_location": dict(sorted(location_counts.items())),
+	}
+
+	runs = _group_photos_into_runs(photos)
+	run_durations = []
+	check_in_to_first = []
+	last_photo_to_next = []
+	burst_gaps = []
+	photos_per_run = []
+	inter_run_gaps = []
+	previous_run_end = None
+	previous_run_location = None
+
+	for index, run in enumerate(runs):
+		photos_per_run.append(len(run))
+		times = [
+			_parse_summary_timestamp(photo.get("timestamp"))
+			for photo in run
+		]
+		times = [value for value in times if value is not None]
+		if times:
+			if len(times) >= 2:
+				run_durations.append((times[-1] - times[0]).total_seconds())
+				for gap_index in range(1, len(times)):
+					burst_gaps.append((times[gap_index] - times[gap_index - 1]).total_seconds())
+			else:
+				run_durations.append(0.0)
+
+			check_in_gap = _check_in_to_first_photo_seconds(run[0])
+			if check_in_gap is not None:
+				check_in_to_first.append(check_in_gap)
+
+			next_run = None
+			for candidate in runs[index + 1:]:
+				if candidate[0].get("location") == run[0].get("location"):
+					next_run = candidate
+					break
+			next_gap = _last_photo_to_next_check_in_seconds(
+				run[-1],
+				next_run=next_run,
+			)
+			if next_gap is not None:
+				last_photo_to_next.append(next_gap)
+
+			run_location = run[0].get("location")
+			if previous_run_end is not None and run_location == previous_run_location:
+				inter_run_gaps.append((times[0] - previous_run_end).total_seconds())
+			previous_run_end = times[-1]
+			previous_run_location = run_location
+
+	stats["runs"] = {
+		"run_count": len(runs),
+		"photos_per_run": _numeric_summary(photos_per_run),
+		"duration_seconds": _numeric_summary(run_durations, exclude_outliers=True),
+		"check_in_to_first_photo_seconds": _numeric_summary(check_in_to_first),
+		"last_photo_to_next_check_in_seconds": _numeric_summary(last_photo_to_next),
+		"inter_run_gap_seconds": _numeric_summary(inter_run_gaps),
+	}
+
+	burst_summary = _numeric_summary(burst_gaps)
+	burst_summary["gaps_over_burst_threshold_count"] = sum(
+		1 for gap in burst_gaps if gap > PHOTO_BURST_GAP_SECONDS
+	)
+	burst_summary["burst_gap_threshold_seconds"] = PHOTO_BURST_GAP_SECONDS
+	stats["burst_gaps_seconds"] = burst_summary
+
+	return stats
+
+
+def _attach_photo_summary_statistics(summary, *, processing_seconds=None):
+	summary["statistics"] = build_photo_summary_statistics(
+		summary.get("photos", []),
+		processing_seconds=processing_seconds,
+	)
+	return summary
 
 
 def sanitize_event_name_for_filename(name):
@@ -2775,16 +3038,17 @@ def build_photo_summary(time_series, queue_entries):
 			queue_file=queue_file,
 		)
 		photos.append(build_photo_summary_entry(queue_file, image_json, match, match_explanation))
-	return {
+	summary = {
 		"schema_version": PHOTO_SUMMARY_SCHEMA_VERSION,
 		"event": time_series.get("event_name"),
 		"event_code": time_series.get("event_dogsportphoto_code"),
 		"photos": photos,
 	}
+	return _attach_photo_summary_statistics(summary)
 
 
-def _assemble_photo_summary(time_series, photo_summary_entries):
-	return {
+def _assemble_photo_summary(time_series, photo_summary_entries, *, processing_seconds=None):
+	summary = {
 		"schema_version": PHOTO_SUMMARY_SCHEMA_VERSION,
 		"event": time_series.get("event_name"),
 		"event_code": time_series.get("event_dogsportphoto_code"),
@@ -2793,6 +3057,10 @@ def _assemble_photo_summary(time_series, photo_summary_entries):
 			key=lambda item: item.get("timestamp") or "",
 		),
 	}
+	return _attach_photo_summary_statistics(
+		summary,
+		processing_seconds=processing_seconds,
+	)
 
 
 def write_photo_summary(path, summary):
@@ -2805,6 +3073,7 @@ def write_photo_summary(path, summary):
 
 def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rating=None, *, force=False, safe=False, timeline_path=None, output_mode=OUTPUT_MODE_FLAT):
 	install_graceful_interrupt_handler()
+	processing_started = time.perf_counter()
 	logger.info("Scanning queue directory %s", queue_dir)
 	queue_files = list(iter_queue_files(queue_dir))
 	if not queue_files:
@@ -3068,7 +3337,11 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 			logger.info("")
 			abort_if_interrupt_requested(completed_item=file)
 
-		summary = _assemble_photo_summary(time_series, photo_summary_entries)
+		summary = _assemble_photo_summary(
+			time_series,
+			photo_summary_entries,
+			processing_seconds=time.perf_counter() - processing_started,
+		)
 		if timeline_path:
 			summary_path = photo_summary_path(timeline_path, time_series)
 		else:
