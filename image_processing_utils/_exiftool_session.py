@@ -103,20 +103,31 @@ class ExifToolSession:
 	def read_json(self, filename: str, tags: list[str] | tuple[str, ...]):
 		tag_args = ["-{}".format(tag) for tag in tags]
 		result = self.execute(["-json"] + tag_args + [filename])
-		if result.returncode != 0 and not result.stdout:
+		if result.returncode == 1 or not result.stdout:
 			return None
-		if not result.stdout:
+		try:
+			parsed = json.loads(result.stdout)
+		except json.JSONDecodeError:
 			return None
-		return json.loads(result.stdout)[0]
+		if not parsed:
+			return None
+		return parsed[0]
 
 	def read_json_batch(self, filenames: list[str], tags: list[str] | tuple[str, ...]):
 		if not filenames:
 			return []
 		tag_args = ["-{}".format(tag) for tag in tags]
 		result = self.execute(["-json"] + tag_args + filenames)
+		if result.returncode == 1 and not result.stdout:
+			return [None] * len(filenames)
 		if not result.stdout:
 			return [None] * len(filenames)
-		parsed = json.loads(result.stdout)
+		try:
+			parsed = json.loads(result.stdout)
+		except json.JSONDecodeError:
+			return [None] * len(filenames)
+		if not isinstance(parsed, list):
+			return [None] * len(filenames)
 		by_source = {}
 		for item in parsed:
 			source = item.get("SourceFile")

@@ -1203,6 +1203,15 @@ def processed_output_subdirectory(keywords, output_mode, *, match=None):
 	return None
 
 
+def unmatched_processed_base(processed_dir, backup_dir):
+	processed_base = os.path.join(processed_dir, UNMATCHED_STAGING_DIR)
+	os.makedirs(processed_base, exist_ok=True)
+	backup_base = os.path.join(backup_dir, UNMATCHED_STAGING_DIR) if backup_dir else None
+	if backup_base:
+		os.makedirs(backup_base, exist_ok=True)
+	return processed_base, backup_base
+
+
 def primary_staging_dir_from_match(match):
 	if not isinstance(match, dict):
 		return None
@@ -2689,15 +2698,16 @@ def move_queue_file_unmodified(
 	else:
 		logger.info("* Moving to processed without modification")
 	output_name = file
+	processed_base, backup_base = unmatched_processed_base(processed_dir, backup_dir)
 	if safe:
 		output_name, processed_file, backup_file = unique_output_names(
-			processed_dir,
-			backup_dir,
+			processed_base,
+			backup_base,
 			output_name,
 		)
 	else:
-		processed_file = os.path.join(processed_dir, output_name)
-		backup_file = os.path.join(backup_dir, output_name) if backup_dir else None
+		processed_file = os.path.join(processed_base, output_name)
+		backup_file = os.path.join(backup_base, output_name) if backup_base else None
 	if backup_dir and backup_file:
 		backup_file, backed_up = copy_destination(
 			queue_file,
@@ -3221,6 +3231,8 @@ def photo_summary_staging_dirs(keywords, *, match=None):
 	if primary:
 		return [primary]
 	dir_names = staging_dir_names_from_keywords(list(keywords))
+	if not dir_names:
+		return [UNMATCHED_STAGING_DIR]
 	staging_dirs = []
 	for dir_name in dir_names:
 		safe_name = safe_team_dir_name(dir_name) or UNMATCHED_STAGING_DIR
@@ -3278,6 +3290,7 @@ def build_passthrough_photo_summary_entry(queue_file, reason, processed_file, *,
 		"disposition": "passthrough",
 		"processed_image": os.path.basename(processed_file),
 		"processed_path": photo_summary_relative_processed_path(processed_file, processed_dir),
+		"staging_dirs": [UNMATCHED_STAGING_DIR],
 	}
 
 
