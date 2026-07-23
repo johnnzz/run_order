@@ -42,7 +42,7 @@ Options:
   --force                 Always overwrite existing destination files.
   --safe                  Write to _N suffix paths instead of overwriting.
   --output MODE           Output layout: flat or subdir [default: flat].
-  --quiet                 Print one tab-separated line per photo to stdout.
+  --verbosity LEVEL       Console output: quiet or full [default: quiet].
   -h, --help              Show this message.
 """
 
@@ -1138,6 +1138,10 @@ OUTPUT_MODE_FLAT = "flat"
 OUTPUT_MODE_SUBDIR = "subdir"
 OUTPUT_MODES = (OUTPUT_MODE_FLAT, OUTPUT_MODE_SUBDIR)
 
+VERBOSITY_QUIET = "quiet"
+VERBOSITY_FULL = "full"
+VERBOSITY_MODES = (VERBOSITY_QUIET, VERBOSITY_FULL)
+
 def parse_output_mode(value):
 	if value is None or value == OUTPUT_MODE_FLAT:
 		return OUTPUT_MODE_FLAT
@@ -1145,6 +1149,15 @@ def parse_output_mode(value):
 		return OUTPUT_MODE_SUBDIR
 	raise SystemExit(
 		"Invalid --output value: {} (expected flat or subdir)".format(value)
+	)
+
+def parse_verbosity(value):
+	if value is None or value == VERBOSITY_QUIET:
+		return VERBOSITY_QUIET
+	if value == VERBOSITY_FULL:
+		return VERBOSITY_FULL
+	raise SystemExit(
+		"Invalid --verbosity value: {} (expected quiet or full)".format(value)
 	)
 
 def processed_output_subdirectory(keywords, output_mode):
@@ -3102,7 +3115,7 @@ def write_photo_summary(path, summary):
 		handle.write("\n")
 
 
-def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rating=None, *, force=False, safe=False, timeline_path=None, output_mode=OUTPUT_MODE_FLAT, quiet=False):
+def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rating=None, *, force=False, safe=False, timeline_path=None, output_mode=OUTPUT_MODE_FLAT, verbosity=VERBOSITY_QUIET):
 	install_graceful_interrupt_handler()
 	processing_started = time.perf_counter()
 	logger.info("Scanning queue directory %s", queue_dir)
@@ -3212,7 +3225,7 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 		for index, (queue_file, image_json) in enumerate(queue_entries, start=1):
 			file = os.path.basename(queue_file)
 			queue_relative = os.path.relpath(queue_file, queue_dir)
-			if not quiet:
+			if verbosity == VERBOSITY_FULL:
 				log_batch_progress("Processing images", index, len(queue_entries))
 				logger.info("Processing image %d/%d: %s", index, len(queue_entries), file)
 				if queue_relative != file:
@@ -3226,7 +3239,7 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 				time_series,
 				queue_file=queue_file,
 			)
-			if quiet:
+			if verbosity == VERBOSITY_QUIET:
 				print_quiet_photo_line(queue_file, image_json, match)
 			photo_summary_entries.append(
 				build_photo_summary_entry(queue_file, image_json, match, match_explanation)
@@ -3241,7 +3254,7 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 					safe=safe,
 					reason="Before first team check-in",
 				)
-				if not quiet:
+				if verbosity == VERBOSITY_FULL:
 					logger.info("")
 				abort_if_interrupt_requested(completed_item=file)
 				continue
@@ -3369,7 +3382,7 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 			)
 			if processed:
 				logger.info("* Output: %s", processed_file)
-			if not quiet:
+			if verbosity == VERBOSITY_FULL:
 				logger.info("")
 			abort_if_interrupt_requested(completed_item=file)
 
@@ -3394,8 +3407,8 @@ def main():
 		return
 
 	log_file = args["--log"]
-	quiet = bool(args["--quiet"])
-	setup_logging(log_file, quiet=quiet)
+	verbosity = parse_verbosity(args["--verbosity"])
+	setup_logging(log_file, quiet=(verbosity == VERBOSITY_QUIET))
 	if log_file:
 		logger.info("Logging to %s", log_file)
 
@@ -3408,7 +3421,7 @@ def main():
 			raise SystemExit("Cannot use --force and --safe together")
 		timeline_path = args["--timeline"] or DEFAULT_TIMELINE_FILE
 		merge_path = args["--timeline2"] or None
-		if not quiet:
+		if verbosity == VERBOSITY_FULL:
 			logger.info("Queue directory: %s", queue_dir)
 			logger.info("Processed directory: %s", processed_dir)
 			if backup_dir:
@@ -3418,7 +3431,7 @@ def main():
 				logger.info("Merging secondary time series from %s", merge_path)
 		time_series = load_time_series(timeline_path, merge_path=merge_path)
 		output_mode = parse_output_mode(args["--output"])
-		if not quiet:
+		if verbosity == VERBOSITY_FULL:
 			logger.info("Output layout: %s", output_mode)
 			logger.info("Starting queue processing...")
 		process_queue(
@@ -3431,9 +3444,9 @@ def main():
 			safe=args["--safe"],
 			timeline_path=timeline_path,
 			output_mode=output_mode,
-			quiet=quiet,
+			verbosity=verbosity,
 		)
-		if not quiet:
+		if verbosity == VERBOSITY_FULL:
 			logger.info("Queue processing complete")
 		return
 
