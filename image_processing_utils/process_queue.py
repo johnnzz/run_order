@@ -1815,16 +1815,8 @@ def resolve_match_location_path(image_time, camera_serial, time_series, *, sheet
 	if not _is_freeshoot_location_path(location_path):
 		return location_path
 
-	freeshoot_entries = time_series.get("check_ins_by_location", {}).get(location_path, [])
-	window = _location_activity_window(freeshoot_entries, sheet_tz=sheet_tz)
-	comparison_time = comparison_instant(image_time)
-	if window is None:
-		return location_path
-	if window[0] <= comparison_time <= window[1]:
-		return location_path
-
-	primary = _primary_team_location_path(time_series)
-	return primary or location_path
+	# Photographer check-in defines the active location until they check in elsewhere.
+	return location_path
 
 def resolve_photographer_entry(
 	image_time,
