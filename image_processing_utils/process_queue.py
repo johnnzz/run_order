@@ -1160,15 +1160,57 @@ def parse_verbosity(value):
 		"Invalid --verbosity value: {} (expected quiet or full)".format(value)
 	)
 
-def processed_output_subdirectory(keywords, output_mode):
+def strip_match_x_keywords(keywords):
+	prefixes = (
+		"X-dog:",
+		"X-handler:",
+		"X-team:",
+		"X-photog:",
+		"X-photoreq:",
+		"X-msg:",
+		"X-dis:",
+		"X-loc:",
+		"X-seq:",
+		"X-duel:",
+	)
+	stripped = set()
+	for keyword in keywords:
+		if not keyword:
+			continue
+		if keyword.startswith("X-id-"):
+			continue
+		if any(keyword.startswith(prefix) for prefix in prefixes):
+			continue
+		stripped.add(keyword)
+	return stripped
+
+
+def processed_output_subdirectory(keywords, output_mode, *, match=None):
 	if output_mode != OUTPUT_MODE_SUBDIR:
 		return None
+	primary_dir = primary_staging_dir_from_match(match)
+	if primary_dir is not None:
+		return primary_dir
 	dir_names = staging_dir_names_from_keywords(list(keywords))
 	dir_name = dir_names[0] if dir_names else UNMATCHED_STAGING_DIR
 	return safe_team_dir_name(dir_name) or UNMATCHED_STAGING_DIR
 
-def resolve_processed_paths(processed_dir, backup_dir, filename, keywords, *, output_mode, safe):
-	subdir = processed_output_subdirectory(keywords, output_mode)
+
+def primary_staging_dir_from_match(match):
+	if not isinstance(match, dict):
+		return None
+	for field in ("team", "handler"):
+		value = match.get(field)
+		if not isinstance(value, str) or not value.strip():
+			continue
+		safe_name = safe_team_dir_name(value.strip())
+		if safe_name:
+			return safe_name
+	return None
+
+
+def resolve_processed_paths(processed_dir, backup_dir, filename, keywords, *, output_mode, safe, match=None):
+	subdir = processed_output_subdirectory(keywords, output_mode, match=match)
 	if subdir:
 		processed_base = os.path.join(processed_dir, subdir)
 		backup_base = os.path.join(backup_dir, subdir) if backup_dir else None
@@ -2761,7 +2803,7 @@ def assign_original_filename_keyword(image_json, original_filename):
 		image_json["log"].append("add original filename keyword")
 		logger.info(" ** Original filename: %s", ofn_keyword)
 
-PHOTO_SUMMARY_SCHEMA_VERSION = "1.4.0"
+PHOTO_SUMMARY_SCHEMA_VERSION = "1.6.0"
 
 
 def _parse_summary_timestamp(value):
@@ -2868,6 +2910,10 @@ def _match_logic_category(match_logic):
 		return "unknown"
 	if match_logic == "before first team check-in":
 		return "before_first_check_in"
+	if match_logic == "Before first team check-in":
+		return "before_first_check_in"
+	if match_logic == "unrecognized or non-image file":
+		return "passthrough"
 	if "no photographer location" in match_logic:
 		return "no_photographer_location"
 	if match_logic.startswith("no team check-in"):
@@ -3052,6 +3098,20 @@ def photo_summary_path(timeline_path, time_series):
 	return Path(filename)
 
 
+def unique_photo_summary_path(path):
+	target = Path(path)
+	if not target.exists():
+		return target
+	counter = 1
+	stem = target.stem
+	suffix = target.suffix
+	while True:
+		candidate = target.with_name("{}_{}{}".format(stem, counter, suffix))
+		if not candidate.exists():
+			return candidate
+		counter += 1
+
+
 def photo_summary_timestamp(image_time):
 	if image_time is None:
 		return None
@@ -3060,7 +3120,34 @@ def photo_summary_timestamp(image_time):
 	return str(image_time)
 
 
-def build_photo_summary_entry(queue_file, image_json, match, match_explanation=None):
+def photo_summary_relative_processed_path(processed_file, processed_dir):
+	relative = os.path.relpath(processed_file, processed_dir)
+	if relative in {".", os.curdir}:
+		return os.path.basename(processed_file)
+	return relative.replace(os.sep, "/")
+
+
+def photo_summary_staging_dirs(keywords):
+	dir_names = staging_dir_names_from_keywords(list(keywords))
+	staging_dirs = []
+	for dir_name in dir_names:
+		safe_name = safe_team_dir_name(dir_name) or UNMATCHED_STAGING_DIR
+		if safe_name not in staging_dirs:
+			staging_dirs.append(safe_name)
+	return staging_dirs
+
+
+def build_photo_summary_entry(
+	queue_file,
+	image_json,
+	match,
+	match_explanation=None,
+	*,
+	processed_image=None,
+	processed_path=None,
+	staging_dirs=None,
+	disposition=None,
+):
 	entry = {
 		"image": os.path.basename(queue_file),
 		"timestamp": photo_summary_timestamp(image_json.get("image_time")),
@@ -3070,12 +3157,36 @@ def build_photo_summary_entry(queue_file, image_json, match, match_explanation=N
 		"handler": match.get("handler") if match else None,
 		"dog": match.get("dog") if match else None,
 	}
+	if processed_image:
+		entry["processed_image"] = processed_image
+	if processed_path:
+		entry["processed_path"] = processed_path
+	if staging_dirs:
+		entry["staging_dirs"] = staging_dirs
+	if disposition:
+		entry["disposition"] = disposition
 	if match_explanation:
 		if match_explanation.get("check_ins"):
 			entry["check_ins"] = match_explanation["check_ins"]
 		if match_explanation.get("match_logic"):
 			entry["match_logic"] = match_explanation["match_logic"]
 	return entry
+
+
+def build_passthrough_photo_summary_entry(queue_file, reason, processed_file, *, processed_dir):
+	return {
+		"image": os.path.basename(queue_file),
+		"timestamp": None,
+		"photographer": None,
+		"location": None,
+		"discipline": None,
+		"handler": None,
+		"dog": None,
+		"match_logic": reason,
+		"disposition": "passthrough",
+		"processed_image": os.path.basename(processed_file),
+		"processed_path": photo_summary_relative_processed_path(processed_file, processed_dir),
+	}
 
 
 def build_photo_summary(time_series, queue_entries):
@@ -3115,11 +3226,12 @@ def _assemble_photo_summary(time_series, photo_summary_entries, *, processing_se
 
 
 def write_photo_summary(path, summary):
-	target = Path(path)
+	target = unique_photo_summary_path(path)
 	target.parent.mkdir(parents=True, exist_ok=True)
 	with open(target, "w", encoding="utf-8") as handle:
 		json.dump(summary, handle, indent=2)
 		handle.write("\n")
+	return target
 
 
 def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rating=None, *, force=False, safe=False, timeline_path=None, output_mode=OUTPUT_MODE_FLAT, verbosity=VERBOSITY_QUIET):
@@ -3129,7 +3241,7 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 	queue_files = list(iter_queue_files(queue_dir))
 	if not queue_files:
 		logger.info("Queue directory %s is empty; nothing to do", queue_dir)
-		return
+		return None
 
 	logger.info("Found %d file(s) in queue", len(queue_files))
 
@@ -3157,255 +3269,292 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 			deleted_metadata_files,
 		)
 	queue_files = candidate_files
+	if timeline_path:
+		summary_path = photo_summary_path(timeline_path, time_series)
+	else:
+		summary_path = photo_summary_path(DEFAULT_TIMELINE_FILE, time_series)
+	photo_summary_entries = []
+	written_summary_path = None
 
-	with ExifToolSession() as exif_session:
-		raw_exif_by_file = {}
-		logger.info("Examining queue files and reading EXIF metadata...")
-		for batch_start in range(0, len(candidate_files), EXIF_READ_BATCH_SIZE):
-			batch = candidate_files[batch_start:batch_start + EXIF_READ_BATCH_SIZE]
-			if not batch:
-				continue
-			log_batch_progress(
-				"Reading EXIF metadata",
-				min(batch_start + len(batch), len(candidate_files)),
-				len(candidate_files),
-			)
-			batch_results = exif_session.read_json_batch(batch, INSPECT_TAGS)
-			for path, raw in zip(batch, batch_results):
-				raw_exif_by_file[path] = raw
+	try:
+		with ExifToolSession() as exif_session:
+			raw_exif_by_file = {}
+			logger.info("Examining queue files and reading EXIF metadata...")
+			for batch_start in range(0, len(candidate_files), EXIF_READ_BATCH_SIZE):
+				batch = candidate_files[batch_start:batch_start + EXIF_READ_BATCH_SIZE]
+				if not batch:
+					continue
+				log_batch_progress(
+					"Reading EXIF metadata",
+					min(batch_start + len(batch), len(candidate_files)),
+					len(candidate_files),
+				)
+				batch_results = exif_session.read_json_batch(batch, INSPECT_TAGS)
+				for path, raw in zip(batch, batch_results):
+					raw_exif_by_file[path] = raw
 
-		queue_entries = []
-		for index, queue_file in enumerate(queue_files, start=1):
-			log_batch_progress("Examining queue files", index, len(queue_files))
-			file = os.path.basename(queue_file)
-			raw_exif = raw_exif_by_file.get(queue_file)
-			image_json = normalize_exif_json(raw_exif, queue_file, session=exif_session)
-			if image_json is None:
-				passthrough_files.append((queue_file, "unrecognized or non-image file"))
-				logger.info("Skipping EXIF for %s (unrecognized or non-image file)", file)
-				abort_if_interrupt_requested(completed_item=file)
-				continue
-			queue_entries.append((queue_file, image_json))
-			abort_if_interrupt_requested(completed_item=file)
-
-		logger.info(
-			"Queue scan complete: %d image(s) to process, %d file(s) to pass through unmodified",
-			len(queue_entries),
-			len(passthrough_files),
-		)
-
-		if passthrough_files:
-			logger.info("Moving pass-through files to processed without modification...")
-			for index, (queue_file, reason) in enumerate(passthrough_files, start=1):
+			queue_entries = []
+			for index, queue_file in enumerate(queue_files, start=1):
+				log_batch_progress("Examining queue files", index, len(queue_files))
 				file = os.path.basename(queue_file)
-				log_batch_progress("Moving pass-through files", index, len(passthrough_files))
-				logger.info("Pass-through %d/%d: %s", index, len(passthrough_files), file)
-				move_queue_file_unmodified(
-					queue_file,
-					processed_dir,
-					backup_dir,
-					force=force,
-					safe=safe,
-					reason=reason,
-				)
-				logger.info("")
+				raw_exif = raw_exif_by_file.get(queue_file)
+				image_json = normalize_exif_json(raw_exif, queue_file, session=exif_session)
+				if image_json is None:
+					passthrough_files.append((queue_file, "unrecognized or non-image file"))
+					logger.info("Skipping EXIF for %s (unrecognized or non-image file)", file)
+					abort_if_interrupt_requested(completed_item=file)
+					continue
+				queue_entries.append((queue_file, image_json))
 				abort_if_interrupt_requested(completed_item=file)
 
-		if not queue_entries:
+			logger.info(
+				"Queue scan complete: %d image(s) to process, %d file(s) to pass through unmodified",
+				len(queue_entries),
+				len(passthrough_files),
+			)
+
 			if passthrough_files:
-				logger.info(
-					"No processable images in queue; moved %d pass-through file(s) to processed",
-					len(passthrough_files),
-				)
-			else:
-				logger.info("No readable images in queue directory %s", queue_dir)
-			remove_empty_queue_dirs(queue_dir)
-			return
-
-		logger.info("Building sequential check-in assignments...")
-		build_sequential_check_in_assignments(queue_entries, time_series)
-		logger.info("Assigning sequence IDs...")
-		sequence_ids = build_sequence_ids(queue_entries, time_series)
-		logger.info("Processing %d image(s)...", len(queue_entries))
-		photo_summary_entries = []
-
-		for index, (queue_file, image_json) in enumerate(queue_entries, start=1):
-			file = os.path.basename(queue_file)
-			queue_relative = os.path.relpath(queue_file, queue_dir)
-			if verbosity == VERBOSITY_FULL:
-				log_batch_progress("Processing images", index, len(queue_entries))
-				logger.info("Processing image %d/%d: %s", index, len(queue_entries), file)
-				if queue_relative != file:
-					logger.info("Processing %s from queue subdirectory %s", file, os.path.dirname(queue_relative))
-
-				log_processing_start(file, image_json)
-
-			match, match_explanation = resolve_photo_match_with_explanation(
-				image_json["image_time"],
-				image_json.get("camera_serial"),
-				time_series,
-				queue_file=queue_file,
-			)
-			if verbosity == VERBOSITY_QUIET:
-				print_quiet_photo_line(queue_file, image_json, match)
-			photo_summary_entries.append(
-				build_photo_summary_entry(queue_file, image_json, match, match_explanation)
-			)
-
-			if is_before_first_team_check_in(image_json["image_time"], time_series):
-				move_queue_file_unmodified(
-					queue_file,
-					processed_dir,
-					backup_dir,
-					force=force,
-					safe=safe,
-					reason="Before first team check-in",
-				)
-				if verbosity == VERBOSITY_FULL:
+				logger.info("Moving pass-through files to processed without modification...")
+				for index, (queue_file, reason) in enumerate(passthrough_files, start=1):
+					file = os.path.basename(queue_file)
+					log_batch_progress("Moving pass-through files", index, len(passthrough_files))
+					logger.info("Pass-through %d/%d: %s", index, len(passthrough_files), file)
+					processed_file, _moved = move_queue_file_unmodified(
+						queue_file,
+						processed_dir,
+						backup_dir,
+						force=force,
+						safe=safe,
+						reason=reason,
+					)
+					photo_summary_entries.append(
+						build_passthrough_photo_summary_entry(
+							queue_file,
+							reason,
+							processed_file,
+							processed_dir=processed_dir,
+						)
+					)
 					logger.info("")
-				abort_if_interrupt_requested(completed_item=file)
-				continue
+					abort_if_interrupt_requested(completed_item=file)
 
-			if default_rating is not None and not image_json["Rating"]:
-				image_json["Rating"] = default_rating
-				image_json["log"].append("add default rating")
-
-			if event_keywords:
-				image_json["Keywords"] = preserve_non_x_keywords(image_json["Keywords"])
-				image_json["Keywords"].update(event_keywords)
-				image_json["log"].append("add event metadata keywords")
-
-			duel_keyword = None
-			if match is None:
-				if image_json.get("camera_serial"):
-					logger.warning(
-						"No photographer location found for serial %s at %s",
-						image_json["camera_serial"],
-						image_json["image_time"],
+			if not queue_entries:
+				if passthrough_files:
+					logger.info(
+						"No processable images in queue; moved %d pass-through file(s) to processed",
+						len(passthrough_files),
 					)
 				else:
-					logger.warning("No camera serial found in %s", queue_relative)
+					logger.info("No readable images in queue directory %s", queue_dir)
 			else:
-				match_keywords = set()
-				for field, value in (
-					("photog", match.get("photographer")),
-					("dog", match.get("dog")),
-					("handler", match.get("handler")),
-					("team", match.get("team")),
-					("photoreq", match.get("photo_request")),
-					("msg", match.get("message_to_photographer")),
-					("dis", match.get("discipline")),
-					("event", match.get("event")),
-					("loc", match.get("location")),
-				):
-					keyword = format_keyword(field, value)
-					if keyword:
-						match_keywords.add(keyword)
-				match_keywords.update(keywords_from_org_ids(match.get("org_ids")))
-				duel_keywords = duel_participant_keywords(
-					image_json["image_time"],
-					match,
-					time_series,
-				)
-				if duel_keywords:
-					match_keywords = {
-						keyword
-						for keyword in match_keywords
-						if not keyword.startswith(("X-dog:", "X-handler:", "X-team:"))
-					}
-					match_keywords.update(duel_keywords)
-				if match_keywords:
-					if not event_keywords:
-						image_json["Keywords"] = preserve_non_x_keywords(image_json["Keywords"])
-					image_json["Keywords"].update(match_keywords)
-				duel_keyword = resolve_duel_keyword(
-					image_json["image_time"],
-					match,
-					time_series,
-				)
-				if duel_keyword:
-					image_json["Keywords"].add(duel_keyword)
-					image_json["log"].append("add dueling dogs duel keyword")
-					logger.info(" ** Matched Duel: %s", duel_keyword)
-				sequence_id = sequence_ids.get(queue_file)
-				seq_keyword = format_keyword("seq", sequence_id)
-				if seq_keyword:
-					if not event_keywords and not match_keywords:
-						image_json["Keywords"] = preserve_non_x_keywords(image_json["Keywords"])
-					image_json["Keywords"].add(seq_keyword)
-					image_json["log"].append("add sequence keyword")
-					log_sequence_keyword(sequence_id)
-				if match.get("dog"):
-					image_json["log"].append(
-						"add matching dog from {} via serial {}".format(
-							_location_label(match["location_path"]),
-							image_json.get("camera_serial"),
-						)
-					)
-					log_match_details(match)
-				elif match.get("photographer"):
-					image_json["log"].append(
-						"add photographer from {} via serial {}".format(
-							_location_label(match["location_path"]),
-							image_json.get("camera_serial"),
-						)
-					)
-					log_match_details(match)
-				else:
-					logger.warning(
-						"No check-in found at location %s for %s",
-						_location_label(match["location_path"]),
+				logger.info("Building sequential check-in assignments...")
+				build_sequential_check_in_assignments(queue_entries, time_series)
+				logger.info("Assigning sequence IDs...")
+				sequence_ids = build_sequence_ids(queue_entries, time_series)
+				logger.info("Processing %d image(s)...", len(queue_entries))
+
+				for index, (queue_file, image_json) in enumerate(queue_entries, start=1):
+					file = os.path.basename(queue_file)
+					queue_relative = os.path.relpath(queue_file, queue_dir)
+					if verbosity == VERBOSITY_FULL:
+						log_batch_progress("Processing images", index, len(queue_entries))
+						logger.info("Processing image %d/%d: %s", index, len(queue_entries), file)
+						if queue_relative != file:
+							logger.info("Processing %s from queue subdirectory %s", file, os.path.dirname(queue_relative))
+
+						log_processing_start(file, image_json)
+
+					match, match_explanation = resolve_photo_match_with_explanation(
 						image_json["image_time"],
+						image_json.get("camera_serial"),
+						time_series,
+						queue_file=queue_file,
 					)
+					if verbosity == VERBOSITY_QUIET:
+						print_quiet_photo_line(queue_file, image_json, match)
 
-			new_name = build_processed_filename(image_json["image_time"], file)
-			output_name, processed_file, backup_file = resolve_processed_paths(
-				processed_dir,
-				backup_dir,
-				new_name,
-				image_json["Keywords"],
-				output_mode=output_mode,
-				safe=safe,
-			)
-			logger.info("* Renaming %s", output_name)
-			assign_image_keyword(image_json)
-			assign_original_filename_keyword(image_json, file)
-			assign_iptc_metadata(image_json, time_series, match, duel_keyword)
-			put_exif(image_json, queue_file, processed_file, session=exif_session)
-			if backup_dir and backup_file:
-				backup_file, backed_up = copy_destination(
-					queue_file,
-					backup_file,
-					force=force,
-					safe=safe,
-				)
-				if backed_up:
-					logger.info("* Backing up to %s", backup_file)
-			processed_file, processed = move_destination(
-				queue_file,
-				processed_file,
-				force=force,
-				safe=safe,
-			)
-			if processed:
-				logger.info("* Output: %s", processed_file)
-			if verbosity == VERBOSITY_FULL:
-				logger.info("")
-			abort_if_interrupt_requested(completed_item=file)
+					if is_before_first_team_check_in(image_json["image_time"], time_series):
+						processed_file, _moved = move_queue_file_unmodified(
+							queue_file,
+							processed_dir,
+							backup_dir,
+							force=force,
+							safe=safe,
+							reason="Before first team check-in",
+						)
+						photo_summary_entries.append(
+							build_photo_summary_entry(
+								queue_file,
+								image_json,
+								match,
+								match_explanation,
+								processed_image=os.path.basename(processed_file),
+								processed_path=photo_summary_relative_processed_path(
+									processed_file,
+									processed_dir,
+								),
+								staging_dirs=photo_summary_staging_dirs(image_json.get("Keywords") or []),
+								disposition="before_first_check_in",
+							)
+						)
+						if verbosity == VERBOSITY_FULL:
+							logger.info("")
+						abort_if_interrupt_requested(completed_item=file)
+						continue
 
-		summary = _assemble_photo_summary(
-			time_series,
-			photo_summary_entries,
-			processing_seconds=time.perf_counter() - processing_started,
-		)
-		if timeline_path:
-			summary_path = photo_summary_path(timeline_path, time_series)
-		else:
-			summary_path = photo_summary_path(DEFAULT_TIMELINE_FILE, time_series)
-		write_photo_summary(summary_path, summary)
-		logger.info("Wrote photo summary to %s", summary_path)
+					if default_rating is not None and not image_json["Rating"]:
+						image_json["Rating"] = default_rating
+						image_json["log"].append("add default rating")
+
+					if event_keywords:
+						image_json["Keywords"] = preserve_non_x_keywords(image_json["Keywords"])
+						image_json["Keywords"].update(event_keywords)
+						image_json["log"].append("add event metadata keywords")
+
+					duel_keyword = None
+					if match is None:
+						if image_json.get("camera_serial"):
+							logger.warning(
+								"No photographer location found for serial %s at %s",
+								image_json["camera_serial"],
+								image_json["image_time"],
+							)
+						else:
+							logger.warning("No camera serial found in %s", queue_relative)
+					else:
+						match_keywords = set()
+						for field, value in (
+							("photog", match.get("photographer")),
+							("dog", match.get("dog")),
+							("handler", match.get("handler")),
+							("team", match.get("team")),
+							("photoreq", match.get("photo_request")),
+							("msg", match.get("message_to_photographer")),
+							("dis", match.get("discipline")),
+							("event", match.get("event")),
+							("loc", match.get("location")),
+						):
+							keyword = format_keyword(field, value)
+							if keyword:
+								match_keywords.add(keyword)
+						match_keywords.update(keywords_from_org_ids(match.get("org_ids")))
+						duel_keywords = duel_participant_keywords(
+							image_json["image_time"],
+							match,
+							time_series,
+						)
+						if duel_keywords:
+							match_keywords = {
+								keyword
+								for keyword in match_keywords
+								if not keyword.startswith(("X-dog:", "X-handler:", "X-team:"))
+							}
+							match_keywords.update(duel_keywords)
+						if match_keywords:
+							image_json["Keywords"] = strip_match_x_keywords(image_json["Keywords"])
+							image_json["Keywords"].update(match_keywords)
+						duel_keyword = resolve_duel_keyword(
+							image_json["image_time"],
+							match,
+							time_series,
+						)
+						if duel_keyword:
+							image_json["Keywords"].add(duel_keyword)
+							image_json["log"].append("add dueling dogs duel keyword")
+							logger.info(" ** Matched Duel: %s", duel_keyword)
+						sequence_id = sequence_ids.get(queue_file)
+						seq_keyword = format_keyword("seq", sequence_id)
+						if seq_keyword:
+							if not event_keywords and not match_keywords:
+								image_json["Keywords"] = preserve_non_x_keywords(image_json["Keywords"])
+							image_json["Keywords"].add(seq_keyword)
+							image_json["log"].append("add sequence keyword")
+							log_sequence_keyword(sequence_id)
+						if match.get("dog"):
+							image_json["log"].append(
+								"add matching dog from {} via serial {}".format(
+									_location_label(match["location_path"]),
+									image_json.get("camera_serial"),
+								)
+							)
+							log_match_details(match)
+						elif match.get("photographer"):
+							image_json["log"].append(
+								"add photographer from {} via serial {}".format(
+									_location_label(match["location_path"]),
+									image_json.get("camera_serial"),
+								)
+							)
+							log_match_details(match)
+						else:
+							logger.warning(
+								"No check-in found at location %s for %s",
+								_location_label(match["location_path"]),
+								image_json["image_time"],
+							)
+
+					new_name = build_processed_filename(image_json["image_time"], file)
+					output_name, processed_file, backup_file = resolve_processed_paths(
+						processed_dir,
+						backup_dir,
+						new_name,
+						image_json["Keywords"],
+						output_mode=output_mode,
+						safe=safe,
+						match=match,
+					)
+					logger.info("* Renaming %s", output_name)
+					assign_image_keyword(image_json)
+					assign_original_filename_keyword(image_json, file)
+					assign_iptc_metadata(image_json, time_series, match, duel_keyword)
+					put_exif(image_json, queue_file, processed_file, session=exif_session)
+					if backup_dir and backup_file:
+						backup_file, backed_up = copy_destination(
+							queue_file,
+							backup_file,
+							force=force,
+							safe=safe,
+						)
+						if backed_up:
+							logger.info("* Backing up to %s", backup_file)
+					processed_file, processed = move_destination(
+						queue_file,
+						processed_file,
+						force=force,
+						safe=safe,
+					)
+					if processed:
+						logger.info("* Output: %s", processed_file)
+					photo_summary_entries.append(
+						build_photo_summary_entry(
+							queue_file,
+							image_json,
+							match,
+							match_explanation,
+							processed_image=os.path.basename(processed_file),
+							processed_path=photo_summary_relative_processed_path(
+								processed_file,
+								processed_dir,
+							),
+							staging_dirs=photo_summary_staging_dirs(image_json["Keywords"]),
+							disposition="tagged",
+						)
+					)
+					if verbosity == VERBOSITY_FULL:
+						logger.info("")
+					abort_if_interrupt_requested(completed_item=file)
+	finally:
+		if photo_summary_entries:
+			summary = _assemble_photo_summary(
+				time_series,
+				photo_summary_entries,
+				processing_seconds=time.perf_counter() - processing_started,
+			)
+			written_summary_path = write_photo_summary(summary_path, summary)
+			logger.info("Wrote photo summary to %s", written_summary_path)
 
 	remove_empty_queue_dirs(queue_dir)
+	return written_summary_path
 
 def main():
 	args = docopt(__doc__)
