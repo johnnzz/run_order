@@ -2804,6 +2804,10 @@ def format_quiet_photo_line(queue_file, image_json, match):
 def print_quiet_photo_line(queue_file, image_json, match):
 	print(format_quiet_photo_line(queue_file, image_json, match), flush=True)
 
+def print_quiet_status(message, *, verbosity=VERBOSITY_QUIET):
+	if verbosity == VERBOSITY_QUIET:
+		print(message, flush=True)
+
 def log_match_details(match):
 	logger.info(" ** Matched Location: %s", match.get("location") or _location_label(match["location_path"]))
 	if match.get("photographer"):
@@ -3279,10 +3283,13 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 	logger.info("Scanning queue directory %s", queue_dir)
 	queue_files = list(iter_queue_files(queue_dir))
 	if not queue_files:
-		logger.info("Queue directory %s is empty; nothing to do", queue_dir)
+		message = "Queue directory {} is empty; nothing to do".format(queue_dir)
+		logger.info(message)
+		print_quiet_status(message, verbosity=verbosity)
 		return None
 
 	logger.info("Found %d file(s) in queue", len(queue_files))
+	print_quiet_status("Found {} file(s) in queue".format(len(queue_files)), verbosity=verbosity)
 
 	inferred_location = time_series.get("inferred_location_path")
 	if inferred_location is not None:
@@ -3319,6 +3326,7 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 		with ExifToolSession() as exif_session:
 			raw_exif_by_file = {}
 			logger.info("Examining queue files and reading EXIF metadata...")
+			print_quiet_status("Reading EXIF metadata...", verbosity=verbosity)
 			for batch_start in range(0, len(candidate_files), EXIF_READ_BATCH_SIZE):
 				batch = candidate_files[batch_start:batch_start + EXIF_READ_BATCH_SIZE]
 				if not batch:
@@ -3351,9 +3359,20 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 				len(queue_entries),
 				len(passthrough_files),
 			)
+			print_quiet_status(
+				"Queue scan complete: {} image(s) to process, {} pass-through".format(
+					len(queue_entries),
+					len(passthrough_files),
+				),
+				verbosity=verbosity,
+			)
 
 			if passthrough_files:
 				logger.info("Moving pass-through files to processed without modification...")
+				print_quiet_status(
+					"Moving {} pass-through file(s)...".format(len(passthrough_files)),
+					verbosity=verbosity,
+				)
 				for index, (queue_file, reason) in enumerate(passthrough_files, start=1):
 					file = os.path.basename(queue_file)
 					log_batch_progress("Moving pass-through files", index, len(passthrough_files))
@@ -3391,6 +3410,10 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 				logger.info("Assigning sequence IDs...")
 				sequence_ids = build_sequence_ids(queue_entries, time_series)
 				logger.info("Processing %d image(s)...", len(queue_entries))
+				print_quiet_status(
+					"Processing {} image(s)...".format(len(queue_entries)),
+					verbosity=verbosity,
+				)
 
 				for index, (queue_file, image_json) in enumerate(queue_entries, start=1):
 					file = os.path.basename(queue_file)
@@ -3635,6 +3658,13 @@ def main():
 			logger.info("Loading time series from %s", timeline_path)
 			if merge_path:
 				logger.info("Merging secondary time series from %s", merge_path)
+		else:
+			print_quiet_status("Loading time series from {}".format(timeline_path), verbosity=verbosity)
+			if merge_path:
+				print_quiet_status(
+					"Merging secondary time series from {}".format(merge_path),
+					verbosity=verbosity,
+				)
 		time_series = load_time_series(timeline_path, merge_path=merge_path)
 		output_mode = parse_output_mode(args["--output"])
 		if verbosity == VERBOSITY_FULL:
