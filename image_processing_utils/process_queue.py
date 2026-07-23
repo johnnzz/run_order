@@ -69,6 +69,7 @@ except ImportError:  # pragma: no cover - Python < 3.9
 from docopt import docopt
 
 import _run_order_timeseries as rot
+from _graceful_interrupt import abort_if_interrupt_requested, install_graceful_interrupt_handler
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +155,8 @@ RUNLIST_FORWARD_CHECK_IN_GRACE_SECONDS = CHECK_IN_GRACE_SECONDS
 RUNLIST_IMMINENT_FORWARD_MAX_SECONDS = 15
 # Require a longer prior gap before matching the next pre-logged team.
 RUNLIST_MIN_PRIOR_GAP_SECONDS = 60
+# When the next check-in is imminent, only forward if the prior gap is much larger.
+RUNLIST_IMMINENT_FORWARD_MIN_RATIO = 6
 # Keep the previous team when the prior check-in was long ago and the next is not imminent.
 RUNLIST_STALE_PRIOR_MIN_SECONDS = 90
 # Check-ins separated by more than this are a pre-batch lead vs a runlist batch cluster.
@@ -1034,12 +1037,26 @@ def format_exiftool_remove_arg(tag, value):
 	escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
 	return '-{}-="{}"'.format(tag, escaped)
 
-def iptc_metadata_args(original_iptc, final_iptc, *, force_headline_refresh=False):
+def iptc_metadata_args(original_iptc, final_iptc, *, replace_all=False, force_headline_refresh=False):
 	if not final_iptc:
 		return []
 
 	original_iptc = original_iptc or {}
 	args = []
+	if replace_all:
+		for field, tag in IPTC_FIELD_TAGS.items():
+			old_value = original_iptc.get(field)
+			new_value = final_iptc.get(field)
+			if old_value:
+				args.append(format_exiftool_remove_arg(tag, old_value))
+			if new_value:
+				args.append(format_exiftool_set_arg(tag, new_value))
+		for subject in sorted(set(original_iptc.get("subjects", []))):
+			args.append(format_exiftool_remove_arg("Subject", subject))
+		for subject in sorted(set(final_iptc.get("subjects", []))):
+			args.append(format_exiftool_set_arg("Subject+", subject))
+		return args
+
 	for field, tag in IPTC_FIELD_TAGS.items():
 		new_value = final_iptc.get(field)
 		old_value = original_iptc.get(field)
@@ -1084,15 +1101,6 @@ def build_processed_filename(image_time, original_filename):
 	base_name = strip_timestamp_prefix(original_filename)
 	return "{}-{}".format(timestamp, base_name)
 
-def _team_match_keywords_changed(original_x_keywords, final_x_keywords):
-	prefixes = ("X-handler:", "X-team:", "X-dog:")
-	def team_keywords(keywords):
-		return {
-			keyword for keyword in keywords
-			if keyword.startswith(prefixes)
-		}
-	return team_keywords(original_x_keywords) != team_keywords(final_x_keywords)
-
 def put_exif(exif_json, filename, output_path=None):
 
 	# if log is empty, we didn't do anything
@@ -1114,10 +1122,7 @@ def put_exif(exif_json, filename, output_path=None):
 		iptc_metadata_args(
 			exif_json.get("original_iptc_metadata"),
 			exif_json.get("iptc_metadata"),
-			force_headline_refresh=_team_match_keywords_changed(
-				original_x_keywords,
-				final_x_keywords,
-			),
+			replace_all=exif_json.get("iptc_metadata") is not None,
 		)
 	)
 
@@ -1644,6 +1649,7 @@ def _runlist_prefer_forward_check_in(gap_before, gap_after):
 	if (
 		after_s <= RUNLIST_IMMINENT_FORWARD_MAX_SECONDS
 		and before_s >= RUNLIST_MIN_PRIOR_GAP_SECONDS
+		and before_s / after_s >= RUNLIST_IMMINENT_FORWARD_MIN_RATIO
 	):
 		return True
 	if before_s > RUNLIST_STALE_PRIOR_MIN_SECONDS and after_s > RUNLIST_IMMINENT_FORWARD_MAX_SECONDS:
@@ -2605,6 +2611,7 @@ def write_photo_summary(path, summary):
 
 
 def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rating=None, *, force=False, safe=False, timeline_path=None):
+	install_graceful_interrupt_handler()
 	logger.info("Scanning queue directory %s", queue_dir)
 	queue_files = list(iter_queue_files(queue_dir))
 	if not queue_files:
@@ -2631,16 +2638,19 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 		if passthrough_reason:
 			passthrough_files.append((queue_file, passthrough_reason))
 			logger.info("Skipping EXIF for %s (%s)", file, passthrough_reason)
+			abort_if_interrupt_requested(completed_item=file)
 			continue
 		image_json = get_exif(queue_file)
 		if image_json is None:
 			passthrough_files.append((queue_file, "unrecognized or non-image file"))
 			logger.info("Skipping EXIF for %s (unrecognized or non-image file)", file)
+			abort_if_interrupt_requested(completed_item=file)
 			continue
 		model = camera_model_from_exif(image_json)
 		if model:
 			maybe_save_camera_sample(queue_file, model)
 		queue_entries.append((queue_file, image_json))
+		abort_if_interrupt_requested(completed_item=file)
 
 	logger.info(
 		"Queue scan complete: %d image(s) to process, %d file(s) to pass through unmodified",
@@ -2663,6 +2673,7 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 				reason=reason,
 			)
 			logger.info("")
+			abort_if_interrupt_requested(completed_item=file)
 
 	if not queue_entries:
 		if passthrough_files:
@@ -2701,6 +2712,7 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 				reason="Before first team check-in",
 			)
 			logger.info("")
+			abort_if_interrupt_requested(completed_item=file)
 			continue
 
 		if default_rating is not None and not image_json["Rating"]:
@@ -2836,6 +2848,7 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 		if processed:
 			logger.info("* Output: %s", processed_file)
 		logger.info("")
+		abort_if_interrupt_requested(completed_item=file)
 
 	summary = build_photo_summary(time_series, queue_entries)
 	if timeline_path:

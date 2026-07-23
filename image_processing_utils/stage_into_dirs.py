@@ -43,6 +43,7 @@ import sys
 from docopt import docopt
 
 import _run_order_timeseries as rot
+from _graceful_interrupt import abort_if_interrupt_requested, install_graceful_interrupt_handler
 
 logger = logging.getLogger(__name__)
 
@@ -468,10 +469,13 @@ def stage_processed(processed_dir, publish_dir, timeline_path, *, force=False, s
 
 	clients = {}
 
+	install_graceful_interrupt_handler()
+
 	for name in files:
 		source_path = os.path.join(processed_dir, name)
 		keywords = fetch_keywords(source_path)
 		if keywords is None:
+			abort_if_interrupt_requested(completed_item=name)
 			continue
 		dir_names = staging_dir_names_from_keywords(keywords)
 
@@ -498,9 +502,11 @@ def stage_processed(processed_dir, publish_dir, timeline_path, *, force=False, s
 				logger.info("Skipped unchanged destination for %s -> %s", name, dest_path)
 
 		if not staged_any:
+			abort_if_interrupt_requested(completed_item=name)
 			continue
 
 		clients.update(clients_from_keywords(keywords, handler_emails))
+		abort_if_interrupt_requested(completed_item=name)
 
 	if clients:
 		merged_clients = load_existing_clients(publish_dir)
