@@ -351,6 +351,7 @@ stage_into_dirs.py [options]
 | `--publish DIR` | `./publish` | Destination root for team/handler folders |
 | `--timeline FILE` | `./eventname-ts.json` | Timeseries JSON for handler email lookup |
 | `--download-prefix URL` | *(empty)* | Pixieset-style download URL prefix for `clients.csv` |
+| `--level NUM` | `1` | `1` = team/handler folders under publish root; `2` = `publish/<photographer>/<team>/` using `X-photog:` or IPTC Creator |
 | `--force` | | Always overwrite existing destination files |
 | `--safe` | | Write to `_N` suffix paths instead of overwriting |
 | `-h`, `--help` | | Show usage |
@@ -367,6 +368,7 @@ With no options, prints usage (same as `-h` / `--help`).
    - If no team but `X-dog:` is present, skip (dog-only images are not staged).
    - Otherwise use `X-handler:` values.
 3. Copy files into `publish/<team-or-handler>/` (slashes in names become hyphens).
+   - With `--level 2`, copy into `publish/<photographer>/<team-or-handler>/` instead. Photographer comes from `X-photog:` keywords, then IPTC `Creator`; missing values use `Unknown`.
 4. Build `clients.csv` with columns `handler_name`, `handler_email`, `team_name`, `download`.
    - Handler emails come from `team_check_in` entries in the timeseries, with optional `X-email:` keyword fallback.
    - Download URLs are built from `--download-prefix` and a slug derived from the team name.

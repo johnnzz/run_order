@@ -25,6 +25,7 @@ Options:
   --publish DIR     Publish directory [default: ./publish].
   --timeline FILE   Timeseries JSON file [default: ./eventname-ts.json].
   --download-prefix URL  Pixieset download URL prefix for clients.csv [default: ].
+  --level NUM       Staging depth: 1=team folders only, 2=photographer/team [default: 1].
   --force           Always overwrite existing destination files.
   --safe            Write to _N suffix paths instead of overwriting.
   -h, --help        Show this message.
@@ -59,6 +60,8 @@ def normalize_quoted_dog_name(value: str) -> str:
 DEFAULT_PROCESSED_DIR = "./processed"
 DEFAULT_PUBLISH_DIR = "./publish"
 DEFAULT_TIMELINE_FILE = "eventname-ts.json"
+UNKNOWN_PHOTOGRAPHER_DIR = "Unknown"
+STAGING_LEVEL_DEFAULT = 1
 UNMATCHED_STAGING_DIR = "Unmatched"
 QUOTED_KEYWORD_RE = re.compile(r'"([^"]*)"')
 X_KEYWORD_RE = re.compile(r"X-([^:]+):\s*(.+)", re.IGNORECASE)
@@ -82,8 +85,11 @@ def run_cmd(cmd):
 def exiftool_error_message(cmd_out):
 	return cmd_out.stderr.strip() or "no output"
 
-def fetch_keywords(filename):
-	cmd = ["exiftool", "-json", "-Keywords", filename]
+def fetch_keywords(filename, *, include_creator=False):
+	tags = ["-Keywords"]
+	if include_creator:
+		tags.append("-Creator")
+	cmd = ["exiftool", "-json"] + tags + [filename]
 	cmd_out = run_cmd(cmd)
 	if cmd_out.returncode == 1:
 		logger.warning(
@@ -97,7 +103,12 @@ def fetch_keywords(filename):
 			"exiftool failed for {}: {}".format(filename, exiftool_error_message(cmd_out))
 		)
 	exif_json = json.loads(cmd_out.stdout)[0]
-	return exif_json.get("Keywords")
+	if not include_creator:
+		return exif_json.get("Keywords")
+	return {
+		"keywords": exif_json.get("Keywords"),
+		"creator": exif_json.get("Creator"),
+	}
 
 def strip_keyword_quotes(keyword):
 	text = str(keyword).strip()
@@ -184,6 +195,47 @@ def dogs_from_keywords(keywords):
 			seen.add(dog)
 			dogs.append(dog)
 	return dogs
+
+def _iptc_text(value):
+	if isinstance(value, str):
+		return value.strip()
+	if isinstance(value, list):
+		for item in value:
+			if isinstance(item, str) and item.strip():
+				return item.strip()
+	return ""
+
+def photographer_name_from_exif(keywords, creator=None):
+	photographers = x_keyword_values(keywords, "photog")
+	if photographers:
+		return photographers[0].strip()
+	creator_text = _iptc_text(creator)
+	if creator_text:
+		return creator_text
+	return None
+
+def safe_photographer_dir_name(photographer_name):
+	safe_name = safe_team_dir_name(photographer_name)
+	if safe_name:
+		return safe_name
+	return UNKNOWN_PHOTOGRAPHER_DIR
+
+def publish_team_dir(publish_dir, team_dir_name, *, level=1, photographer_dir_name=None):
+	if level >= 2:
+		photographer = photographer_dir_name or UNKNOWN_PHOTOGRAPHER_DIR
+		return os.path.join(publish_dir, photographer, team_dir_name)
+	return os.path.join(publish_dir, team_dir_name)
+
+def parse_staging_level(value):
+	if value is None:
+		return STAGING_LEVEL_DEFAULT
+	try:
+		level = int(str(value).strip())
+	except ValueError:
+		raise SystemExit("Invalid --level value: {} (expected 1 or 2)".format(value))
+	if level not in (1, 2):
+		raise SystemExit("Invalid --level value: {} (expected 1 or 2)".format(value))
+	return level
 
 def staging_dir_names_from_keywords(keywords):
 	teams = teams_from_keywords(keywords)
@@ -459,7 +511,7 @@ def write_clients_csv(publish_dir, clients, download_prefix=""):
 			])
 	logger.info("Wrote %s", csv_path)
 
-def stage_processed(processed_dir, publish_dir, timeline_path, *, force=False, safe=False, download_prefix=""):
+def stage_processed(processed_dir, publish_dir, timeline_path, *, force=False, safe=False, download_prefix="", level=STAGING_LEVEL_DEFAULT):
 	if not os.path.isdir(processed_dir):
 		logger.info("Processed directory %s not found; nothing to stage", processed_dir)
 		return
@@ -480,10 +532,21 @@ def stage_processed(processed_dir, publish_dir, timeline_path, *, force=False, s
 
 	for source_path in source_files:
 		name = os.path.basename(source_path)
-		keywords = fetch_keywords(source_path)
-		if keywords is None:
-			abort_if_interrupt_requested(completed_item=name)
-			continue
+		if level >= 2:
+			staging_exif = fetch_keywords(source_path, include_creator=True)
+			if staging_exif is None:
+				abort_if_interrupt_requested(completed_item=name)
+				continue
+			keywords = staging_exif.get("keywords")
+			photographer_dir_name = safe_photographer_dir_name(
+				photographer_name_from_exif(keywords, staging_exif.get("creator"))
+			)
+		else:
+			keywords = fetch_keywords(source_path)
+			if keywords is None:
+				abort_if_interrupt_requested(completed_item=name)
+				continue
+			photographer_dir_name = None
 		dir_names = staging_dir_names_from_keywords(keywords)
 
 		staged_any = False
@@ -493,7 +556,12 @@ def stage_processed(processed_dir, publish_dir, timeline_path, *, force=False, s
 				logger.warning("Skipping %s: empty staging keyword value", name)
 				continue
 
-			target_dir = os.path.join(publish_dir, safe_dir_name)
+			target_dir = publish_team_dir(
+				publish_dir,
+				safe_dir_name,
+				level=level,
+				photographer_dir_name=photographer_dir_name,
+			)
 			os.makedirs(target_dir, exist_ok=True)
 			dest_path = os.path.join(target_dir, name)
 			dest_path, copied = copy_destination(
@@ -538,6 +606,7 @@ def main():
 		force=args["--force"],
 		safe=args["--safe"],
 		download_prefix=args["--download-prefix"] or "",
+		level=parse_staging_level(args["--level"]),
 	)
 
 if __name__ == "__main__":
