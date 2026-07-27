@@ -1047,10 +1047,6 @@ def build_iptc_metadata(time_series, match, image_json, duel_keyword):
 	if state:
 		metadata["state"] = state
 
-	subjects = build_iptc_subjects(time_series, match)
-	if subjects:
-		metadata["subjects"] = subjects
-
 	return metadata or None
 
 def format_exiftool_set_arg(tag, value):
@@ -1085,10 +1081,6 @@ def iptc_metadata_args(original_iptc, final_iptc, *, replace_all=False, force_he
 				args.append(format_exiftool_remove_arg(tag, old_value))
 			if new_value:
 				args.append(format_exiftool_set_arg(tag, new_value))
-		for subject in sorted(set(original_iptc.get("subjects", []))):
-			args.append(format_exiftool_remove_arg("Subject", subject))
-		for subject in sorted(set(final_iptc.get("subjects", []))):
-			args.append(format_exiftool_set_arg("Subject+", subject))
 		return args
 
 	for field, tag in IPTC_FIELD_TAGS.items():
@@ -1105,13 +1097,6 @@ def iptc_metadata_args(original_iptc, final_iptc, *, replace_all=False, force_he
 		if old_value:
 			args.append(format_exiftool_remove_arg(tag, old_value))
 		args.append(format_exiftool_set_arg(tag, new_value))
-
-	original_subjects = set(original_iptc.get("subjects", []))
-	final_subjects = set(final_iptc.get("subjects", []))
-	for subject in sorted(original_subjects - final_subjects):
-		args.append(format_exiftool_remove_arg("Subject", subject))
-	for subject in sorted(final_subjects - original_subjects):
-		args.append(format_exiftool_set_arg("Subject+", subject))
 	return args
 
 def assign_iptc_metadata(image_json, time_series, match, duel_keyword):
