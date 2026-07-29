@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: MIT
 # See LICENSE for the full license text.
-"""Internal shared run_order timeseries helpers for schema version 2.0.0.
+"""Internal shared run_order timeseries helpers for schema version 2.1.0.
 
 Not run directly — import as _run_order_timeseries. The leading underscore marks
 this as a private helper module co-located with the CLI scripts that need it.
@@ -33,7 +33,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-SCHEMA_VERSION = "2.0.0"
+SCHEMA_VERSION = "2.1.0"
+ACCEPTED_SCHEMA_VERSIONS = frozenset({"2.0.0", "2.1.0", SCHEMA_VERSION})
 
 _LEGACY_CHECK_INS_KEY = "check_ins"
 _LOCATION_METADATA_KEYS = frozenset({"cameras", "locations", "selected_location_id"})
@@ -255,14 +256,38 @@ def photographer_name(entry: Mapping[str, Any]) -> str:
     return UNSPECIFIED_HANDLER_NAME
 
 
-def photographer_cameras(entry: Mapping[str, Any]) -> list[dict[str, str]]:
+def camera_offset_seconds(camera: Mapping[str, Any]) -> Optional[float]:
+    raw = camera.get("offset")
+    if raw is None:
+        raw = camera.get("time_calibration_offset_seconds")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def camera_object(
+    *,
+    model: str,
+    serial: str,
+    offset: Optional[float] = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"model": model.strip(), "serial": serial.strip()}
+    if offset is not None:
+        payload["offset"] = float(offset)
+    return payload
+
+
+def photographer_cameras(entry: Mapping[str, Any]) -> list[dict[str, Any]]:
     photographer = entry.get("photographer")
     cameras_raw: Any = None
     if isinstance(photographer, dict):
         cameras_raw = photographer.get("cameras")
     if cameras_raw is None:
         cameras_raw = entry.get("cameras")
-    cameras: list[dict[str, str]] = []
+    cameras: list[dict[str, Any]] = []
     if isinstance(cameras_raw, list):
         for camera in cameras_raw:
             if not isinstance(camera, dict):
@@ -270,9 +295,19 @@ def photographer_cameras(entry: Mapping[str, Any]) -> list[dict[str, str]]:
             model = camera.get("model")
             serial = camera.get("serial", camera.get("serial_number"))
             if isinstance(model, str) and model.strip() and isinstance(serial, str) and serial.strip():
-                cameras.append({"model": model.strip(), "serial": serial.strip()})
+                item = camera_object(model=model, serial=serial, offset=camera_offset_seconds(camera))
+                cameras.append(item)
     cameras.sort(key=lambda item: (item["model"], item["serial"]))
     return cameras
+
+
+def photographer_camera_offsets_by_serial(entry: Mapping[str, Any]) -> dict[str, float]:
+    offsets: dict[str, float] = {}
+    for camera in photographer_cameras(entry):
+        offset = camera.get("offset")
+        if offset is not None:
+            offsets[camera["serial"]] = float(offset)
+    return offsets
 
 
 def discipline_name(entry: Mapping[str, Any]) -> Optional[str]:
@@ -457,7 +492,7 @@ def migrate_document_to_v2(
     *,
     event_code: Optional[str] = None,
 ) -> None:
-    if data.get("schema_version") == SCHEMA_VERSION and isinstance(data.get("entries"), list):
+    if data.get("schema_version") in ACCEPTED_SCHEMA_VERSIONS and isinstance(data.get("entries"), list):
         event = data.setdefault("event", {})
         if isinstance(event, dict):
             migrate_event_metadata_code_field(event)

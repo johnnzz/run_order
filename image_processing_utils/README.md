@@ -245,7 +245,7 @@ Event metadata from the `event` block becomes `X-event:`, `X-org:`, `X-club:`, `
 
 ### Photo matching
 
-1. **Image time** — From EXIF (`SubSecCreateDate`, `SubSecDateTimeOriginal`, `CreateDate`, `DateTimeOriginal`, `FileModifyDate`) with offset tags; naive timestamps use `NAIVE_TIMESTAMP_TIMEZONE` (default `America/Los_Angeles`).
+1. **Image time** — From EXIF (`SubSecCreateDate`, `SubSecDateTimeOriginal`, `CreateDate`, `DateTimeOriginal`, `FileModifyDate`) with offset tags; naive timestamps use `NAIVE_TIMESTAMP_TIMEZONE` (default `America/Los_Angeles`). When the timeseries includes a per-camera **`offset`** on the matching photographer check-in, that many seconds are added to EXIF time before matching check-ins.
 2. **Camera serial** — Body serial tags, excluding lens serials.
 3. **Photographer location** — Latest `photographer_check_in` at or before photo time where serial matches; ties prefer lower dock lane number.
 4. **Team check-in** — Latest `team_check_in` at or before photo time for that location (QR mode and self check-in). Runlist mode (`event_mode_checkin: Runlist`, or legacy timeseries with a lead check-in >120s before a batch cluster) groups photos into bursts (~3 s apart) and matches sequentially: first burst to the lead check-in, then each later burst to the next check-in in batch order.
