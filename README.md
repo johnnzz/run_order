@@ -22,7 +22,7 @@ A time-series file is a single JSON object with three top-level fields:
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `schema_version` | string | Format version, currently `"2.0.0"` |
+| `schema_version` | string | Format version (`2.0.0` or `2.1.0`; current `"2.1.0"`) |
 | `event` | object | Event metadata |
 | `entries` | array | Chronological log of timeseries records |
 
@@ -251,10 +251,11 @@ https://raw.githubusercontent.com/johnnzz/run_order/main/run_order.schema.json
 
 ## Versioning
 
-The current schema version is **2.0.0**, used by dogsport-photo-tools. 
+The current schema version is **2.1.0**, used by dogsport-photo-tools. Documents may still declare **2.0.0**; optional per-camera **`offset`** (seconds) on photographer check-ins was added in 2.1.0.
 
 | Version | Changes |
 | --- | --- |
+| **2.1.0** | Optional `offset` on each camera in `photographer_check_in` entries (seconds added to EXIF time when matching photos) |
 | **2.0.0** | Chronological `entries` log; structured handler/dog/team objects; optional event metadata used by the teams app; entry types `team_check_in`, `photographer_check_in`, `set_discipline` |
 | **1.1.0** | deprecated |
 | **1.0.0** | deprecated |
@@ -276,5 +277,5 @@ The [dogsport-photo-tools](https://github.com/johnnzz/dogsport-photo-tools) weba
 
 ## Related tools
 
-- **dogsport-photo-tools** — writes and reads 2.0.0 timeseries files for event check-ins and photo workflow
+- **dogsport-photo-tools** — writes and reads 2.0.x / 2.1.0 timeseries files for event check-ins and photo workflow
 - **`image_processing_utils/_run_order_timeseries.py`** — shared timeseries helpers imported by the CLI scripts and webapp backend

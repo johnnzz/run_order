@@ -1324,6 +1324,52 @@ def _is_check_in_entry(entry):
 def _camera_serials(entry):
 	return {camera["serial"] for camera in rot.photographer_cameras(entry)}
 
+def _camera_offsets_by_serial(entry):
+	return rot.photographer_camera_offsets_by_serial(entry)
+
+def _calibration_offset_for_camera(
+	time_series,
+	camera_serial,
+	image_time,
+	*,
+	sheet_tz=None,
+	event_tz=None,
+):
+	photographer_entry = resolve_photographer_entry(
+		image_time,
+		camera_serial,
+		time_series.get("photographer_entries", []),
+		event_tz,
+		sheet_tz=sheet_tz,
+		photographer_by_serial=time_series.get("photographer_by_serial"),
+	)
+	if photographer_entry is None:
+		return 0.0
+	offsets = photographer_entry.get("offsets_by_serial") or {}
+	try:
+		return float(offsets.get(camera_serial, 0.0))
+	except (TypeError, ValueError):
+		return 0.0
+
+def effective_image_time_for_matching(
+	image_time,
+	camera_serial,
+	time_series,
+	*,
+	sheet_tz=None,
+	event_tz=None,
+):
+	offset = _calibration_offset_for_camera(
+		time_series,
+		camera_serial,
+		image_time,
+		sheet_tz=sheet_tz,
+		event_tz=event_tz,
+	)
+	if not offset:
+		return image_time
+	return image_time + timedelta(seconds=offset)
+
 def _dog_call_name(entry):
 	dog_name = rot.dog_display_name(entry)
 	if dog_name == rot.UNSPECIFIED_DOG_NAME:
@@ -1412,6 +1458,7 @@ def _index_timeseries_entry(entry, photographer_entries, check_ins_by_location, 
 			"location_path": location_path,
 			"photographer": rot.photographer_name(entry),
 			"serials": _camera_serials(entry),
+			"offsets_by_serial": _camera_offsets_by_serial(entry),
 		})
 		return
 	if kind == "set_discipline":
@@ -2554,16 +2601,23 @@ def _build_photo_match_result(
 	}
 
 def resolve_photo_match_with_explanation(image_time, camera_serial, time_series, *, queue_file=None):
-	if is_before_first_team_check_in(image_time, time_series):
+	event_tz = event_timezone_from_time_series(time_series)
+	sheet_tz = sheet_timezone_from_time_series(time_series)
+	match_time = effective_image_time_for_matching(
+		image_time,
+		camera_serial,
+		time_series,
+		sheet_tz=sheet_tz,
+		event_tz=event_tz,
+	)
+	if is_before_first_team_check_in(match_time, time_series):
 		return None, {
 			"match_logic": "before first team check-in",
 			"check_ins": {},
 		}
 
-	event_tz = event_timezone_from_time_series(time_series)
-	sheet_tz = sheet_timezone_from_time_series(time_series)
 	photographer_entry = resolve_photographer_entry(
-		image_time,
+		match_time,
 		camera_serial,
 		time_series["photographer_entries"],
 		event_tz,
@@ -2580,7 +2634,7 @@ def resolve_photo_match_with_explanation(image_time, camera_serial, time_series,
 		photographer = None
 	else:
 		location_path = resolve_match_location_path(
-			image_time,
+			match_time,
 			camera_serial,
 			time_series,
 			sheet_tz=sheet_tz,
@@ -2597,14 +2651,14 @@ def resolve_photo_match_with_explanation(image_time, camera_serial, time_series,
 		}
 
 	selection = _select_photo_check_in(
-		image_time,
+		match_time,
 		location_path,
 		time_series,
 		queue_file=queue_file,
 		sheet_tz=sheet_tz,
 	)
 	match = _build_photo_match_result(
-		image_time,
+		match_time,
 		location_path,
 		photographer,
 		selection,
@@ -2614,7 +2668,7 @@ def resolve_photo_match_with_explanation(image_time, camera_serial, time_series,
 	)
 	explanation = _photo_match_explanation_from_selection(
 		selection,
-		image_time,
+		match_time,
 		time_series,
 		sheet_tz=sheet_tz,
 	)

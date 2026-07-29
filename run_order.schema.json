@@ -13,8 +13,11 @@
     "additionalProperties": false,
     "properties": {
         "schema_version": {
-            "const": "2.0.0",
-            "description": "Document format version. Current version is 2.0.0."
+            "enum": [
+                "2.0.0",
+                "2.1.0"
+            ],
+            "description": "Document format version. 2.1.0 adds optional per-camera time calibration offset on photographer check-ins."
         },
         "event": {
             "$ref": "#/$defs/event"
@@ -225,6 +228,10 @@
                     "type": "string",
                     "minLength": 1,
                     "description": "Camera serial number. Used to correlate images to a photographer location check-in."
+                },
+                "offset": {
+                    "type": "number",
+                    "description": "Optional time calibration offset in seconds added to this camera's EXIF capture time when matching photos to check-ins (same sign as DogSportPhoto camera calibration)."
                 }
             }
         },
