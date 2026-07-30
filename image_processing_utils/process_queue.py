@@ -82,6 +82,7 @@ from stage_into_dirs import (
 )
 from x_keywords import (
 	format_keyword,
+	hierarchical_subject_entries,
 	is_match_x_keyword,
 	is_x_keyword,
 	canonical_x_keyword,
@@ -881,18 +882,29 @@ def format_hierarchical_subject_remove_arg(keyword):
 	escaped = str(keyword).replace("\\", "\\\\").replace('"', '\\"')
 	return '-XMP-lr:HierarchicalSubject-="{}"'.format(escaped)
 
+def format_subject_add_arg(value):
+	escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+	return '-XMP-dc:Subject+="{}"'.format(escaped)
+
+def format_subject_remove_arg(value):
+	escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+	return '-XMP-dc:Subject-="{}"'.format(escaped)
+
 def append_keyword_write_args(cmd, keyword, *, remove=False):
+	canonical, subject_nodes = hierarchical_subject_entries(keyword)
 	if remove:
-		canonical = canonical_x_keyword(keyword)
 		for form in sorted(keyword_removal_forms(keyword)):
 			cmd.append(format_keyword_remove_arg(form))
 		if canonical:
 			cmd.append(format_hierarchical_subject_remove_arg(canonical))
+			for subject in sorted(subject_nodes):
+				cmd.append(format_subject_remove_arg(subject))
 		return
-	canonical = canonical_x_keyword(keyword)
 	if canonical is None:
 		return
 	cmd.append(format_hierarchical_subject_add_arg(canonical))
+	for subject in sorted(subject_nodes):
+		cmd.append(format_subject_add_arg(subject))
 
 IPTC_SCALAR_FIELDS = (
 	"headline",

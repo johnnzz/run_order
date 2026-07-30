@@ -81,6 +81,18 @@ def canonical_x_keyword(keyword):
 	return "X-{}|{}".format(field, value)
 
 
+def hierarchical_subject_entries(keyword):
+	"""Return hierarchical path and flattened dc:Subject nodes for Lightroom."""
+	canonical = canonical_x_keyword(keyword)
+	if canonical is None:
+		return None, set()
+	field, value = parse_x_keyword(canonical)
+	if field is None or not value:
+		return None, set()
+	parent = "X-{}".format(field)
+	return canonical, {parent, value}
+
+
 def keyword_removal_forms(keyword):
 	"""All keyword-tag representations to delete when scrubbing legacy metadata."""
 	if not isinstance(keyword, str):
