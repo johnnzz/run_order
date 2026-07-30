@@ -268,15 +268,15 @@ When a photo match is found, the script also writes **IPTC Core** metadata via e
 | Source | `{event} ({dogsportphoto_code})` |
 | Transmission Reference | `X-img` UUID |
 
-`X-*` keywords remain for staging and internal tooling.
+`X-*` keywords use hierarchical form `X-<field>|<value>` (for example `X-team|Handler n Dog`) and are also written to Lightroom's `XMP-lr:HierarchicalSubject` so keyword panels can group by parent. Legacy flat `X-<field>: <value>` keywords are still read for backward compatibility.
 
-**Event keywords:** `X-event:`, `X-org:`, `X-club:`, `X-venue:`, `X-type:`, `X-city:`
+**Event keywords:** `X-event|`, `X-org|`, `X-club|`, `X-venue|`, `X-type|`, `X-city|`
 
-**Match keywords:** `X-photog:`, `X-dog:`, `X-handler:`, `X-team:`, `X-photoreq:`, `X-msg:`, `X-dis:`, `X-loc:`, `X-id-<org>:`
+**Match keywords:** `X-photog|`, `X-dog|`, `X-handler|`, `X-team|`, `X-photoreq|`, `X-msg|`, `X-dis|`, `X-loc|`, `X-id-<org>|`
 
-**Per-image keywords:** `X-img:` (unique ID), `X-ofn:` (original filename), `X-seq:` (sequence group)
+**Per-image keywords:** `X-img|` (unique ID), `X-ofn|` (original filename), `X-seq|` (sequence group)
 
-**Dueling Dogs:** `X-duel:` plus per-lane dog/handler/team keywords when both dock lanes have dogs checked in.
+**Dueling Dogs:** `X-duel|` plus per-lane dog/handler/team keywords when both dock lanes have dogs checked in.
 
 ### Sequence grouping (`X-seq:`)
 

@@ -45,6 +45,7 @@ from docopt import docopt
 
 import _run_order_timeseries as rot
 from _graceful_interrupt import abort_if_interrupt_requested, install_graceful_interrupt_handler
+from x_keywords import parse_x_keyword
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,6 @@ UNKNOWN_PHOTOGRAPHER_DIR = "Unknown"
 STAGING_LEVEL_DEFAULT = 1
 UNMATCHED_STAGING_DIR = "Unmatched"
 QUOTED_KEYWORD_RE = re.compile(r'"([^"]*)"')
-X_KEYWORD_RE = re.compile(r"X-([^:]+):\s*(.+)", re.IGNORECASE)
 
 def setup_logging():
 	logging.basicConfig(
@@ -147,11 +147,7 @@ def x_keyword_values(keywords, field_name):
 	field_name = field_name.strip().lower()
 	for keyword in expand_keywords(keywords):
 		keyword = strip_keyword_quotes(keyword)
-		match = X_KEYWORD_RE.match(keyword)
-		if not match:
-			continue
-		field = match.group(1).strip().lower()
-		value = match.group(2).strip()
+		field, value = parse_x_keyword(keyword)
 		if field == field_name and value:
 			values.append(value)
 	return values
@@ -160,11 +156,7 @@ def x_keyword_map(keywords):
 	fields = {}
 	for keyword in expand_keywords(keywords):
 		keyword = strip_keyword_quotes(keyword)
-		match = X_KEYWORD_RE.match(keyword)
-		if not match:
-			continue
-		field = match.group(1).strip().lower()
-		value = match.group(2).strip()
+		field, value = parse_x_keyword(keyword)
 		if field and value:
 			fields[field] = value
 	return fields
