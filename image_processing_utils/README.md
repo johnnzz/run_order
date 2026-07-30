@@ -268,7 +268,7 @@ When a photo match is found, the script also writes **IPTC Core** metadata via e
 | Source | `{event} ({dogsportphoto_code})` |
 | Transmission Reference | `X-img` UUID |
 
-`X-*` keywords use hierarchical form `X-<field>|<value>` (for example `X-team|Handler n Dog`) and are also written to Lightroom's `XMP-lr:HierarchicalSubject` so keyword panels can group by parent. Legacy flat `X-<field>: <value>` keywords are still read for backward compatibility.
+`X-*` keywords are written only to Lightroom's hierarchical metadata (`XMP-lr:HierarchicalSubject`) using `X-<field>|<value>` paths (for example `X-team|Handler n Dog`). Legacy flat `X-<field>: <value>` entries in IPTC Keywords are removed on reprocess. Parsers accept both forms when reading older files.
 
 **Event keywords:** `X-event|`, `X-org|`, `X-club|`, `X-venue|`, `X-type|`, `X-city|`
 

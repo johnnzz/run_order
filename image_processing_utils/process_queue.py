@@ -84,7 +84,8 @@ from x_keywords import (
 	format_keyword,
 	is_match_x_keyword,
 	is_x_keyword,
-	keyword_write_forms,
+	canonical_x_keyword,
+	keyword_removal_forms,
 	keyword_x_field,
 	keyword_x_value,
 	normalize_quoted_dog_name,
@@ -505,10 +506,13 @@ def normalize_exif_json(exif_json, filename, *, session=None):
 			image_keywords = [image_keywords]
 	else:
 		image_keywords = list()
-	image_keywords = set(image_keywords)
-	image_keywords.discard(None)
-	image_keywords.update(_normalize_exif_list(exif_json.get("HierarchicalSubject")))
-	exif_json["original_x_keywords"] = x_keywords(image_keywords)
+	keyword_values = [item for item in image_keywords if item is not None]
+	non_x_keywords = preserve_non_x_keywords(keyword_values)
+	x_keyword_values = set()
+	x_keyword_values.update(x_keywords(_normalize_exif_list(exif_json.get("HierarchicalSubject"))))
+	x_keyword_values.update(x_keywords(keyword_values))
+	image_keywords = non_x_keywords | x_keyword_values
+	exif_json["original_x_keywords"] = set(x_keyword_values)
 	exif_json["Keywords"] = image_keywords
 	exif_json["original_iptc_metadata"] = read_iptc_metadata(exif_json)
 	exif_json["Rating"] = exif_json.get("Rating")
@@ -865,10 +869,6 @@ def build_sequence_ids(queue_entries, time_series):
 
 	return sequence_ids
 
-def format_keyword_arg(keyword):
-	escaped = str(keyword).replace("\\", "\\\\").replace('"', '\\"')
-	return '-Keywords="{}"'.format(escaped)
-
 def format_keyword_remove_arg(keyword):
 	escaped = str(keyword).replace("\\", "\\\\").replace('"', '\\"')
 	return '-Keywords-="{}"'.format(escaped)
@@ -883,17 +883,15 @@ def format_hierarchical_subject_remove_arg(keyword):
 
 def append_keyword_write_args(cmd, keyword, *, remove=False):
 	if remove:
-		for form in sorted(keyword_write_forms(keyword)):
+		canonical = canonical_x_keyword(keyword)
+		for form in sorted(keyword_removal_forms(keyword)):
 			cmd.append(format_keyword_remove_arg(form))
-			cmd.append(format_hierarchical_subject_remove_arg(form))
+		if canonical:
+			cmd.append(format_hierarchical_subject_remove_arg(canonical))
 		return
-	field = keyword_x_field(keyword)
-	value = keyword_x_value(keyword)
-	if field is None or value is None:
-		cmd.append(format_keyword_arg(keyword))
+	canonical = canonical_x_keyword(keyword)
+	if canonical is None:
 		return
-	canonical = "X-{}|{}".format(field, value)
-	cmd.append(format_keyword_arg(canonical))
 	cmd.append(format_hierarchical_subject_add_arg(canonical))
 
 IPTC_SCALAR_FIELDS = (

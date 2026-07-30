@@ -74,12 +74,20 @@ def is_x_keyword(keyword):
 	return keyword_x_field(keyword) is not None
 
 
-def keyword_write_forms(keyword):
+def canonical_x_keyword(keyword):
+	field, value = parse_x_keyword(keyword)
+	if field is None or not value:
+		return None
+	return "X-{}|{}".format(field, value)
+
+
+def keyword_removal_forms(keyword):
+	"""All keyword-tag representations to delete when scrubbing legacy metadata."""
 	if not isinstance(keyword, str):
 		return set()
 	field, value = parse_x_keyword(keyword)
 	if field is None or not value:
-		return {keyword}
+		return {keyword.strip()}
 	return {
 		keyword.strip(),
 		"X-{}|{}".format(field, value),
