@@ -882,10 +882,6 @@ def format_hierarchical_subject_remove_arg(keyword):
 	escaped = str(keyword).replace("\\", "\\\\").replace('"', '\\"')
 	return '-XMP-lr:HierarchicalSubject-="{}"'.format(escaped)
 
-def format_subject_add_arg(value):
-	escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
-	return '-XMP-dc:Subject+="{}"'.format(escaped)
-
 def format_subject_remove_arg(value):
 	escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
 	return '-XMP-dc:Subject-="{}"'.format(escaped)
@@ -903,8 +899,6 @@ def append_keyword_write_args(cmd, keyword, *, remove=False):
 	if canonical is None:
 		return
 	cmd.append(format_hierarchical_subject_add_arg(canonical))
-	for subject in sorted(subject_nodes):
-		cmd.append(format_subject_add_arg(subject))
 
 IPTC_SCALAR_FIELDS = (
 	"headline",

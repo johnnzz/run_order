@@ -82,7 +82,7 @@ def canonical_x_keyword(keyword):
 
 
 def hierarchical_subject_entries(keyword):
-	"""Return hierarchical path and flattened dc:Subject nodes for Lightroom."""
+	"""Return hierarchical path and legacy dc:Subject nodes to scrub on reprocess."""
 	canonical = canonical_x_keyword(keyword)
 	if canonical is None:
 		return None, set()
@@ -90,7 +90,7 @@ def hierarchical_subject_entries(keyword):
 	if field is None or not value:
 		return None, set()
 	parent = "X-{}".format(field)
-	return canonical, {parent, value}
+	return canonical, {parent, value, canonical}
 
 
 def keyword_removal_forms(keyword):
