@@ -16,9 +16,9 @@ When --process completes, a photo summary JSON file named <event>-ps.json is wri
 next to the timeseries file. Each entry records the image name, capture timestamp,
 and matched handler and dog.
 
-Each processed file will have EXIF keywords prefixed with X-, such as X-team,
-X-handler, X-dog, X-event, X-org.  Results can be reviewed with the 
-summarize_dir.py script.
+Each processed file will have hierarchical EXIF keywords prefixed with X-, such as
+X-team|Handler n Dog, grouped under parent nodes like X-team in Lightroom.
+Results can be reviewed with the summarize_dir.py script.
 
 Portable and self-contained: only requires docopt (stdlib otherwise).
 Also requires exiftool on PATH for --process.
@@ -80,19 +80,18 @@ from stage_into_dirs import (
 	safe_team_dir_name,
 	staging_dir_names_from_keywords,
 )
+from x_keywords import (
+	format_keyword,
+	is_match_x_keyword,
+	is_x_keyword,
+	keyword_write_forms,
+	keyword_x_field,
+	keyword_x_value,
+	normalize_quoted_dog_name,
+	strip_match_x_keywords,
+)
 
 logger = logging.getLogger(__name__)
-
-_QUOTED_DOG_NAME_SEGMENT_RE = re.compile(r'\s*"([^"]*)"\s*')
-
-
-def normalize_quoted_dog_name(value: str) -> str:
-	text = str(value).strip()
-	if not text or '"' not in text:
-		return text
-	return _QUOTED_DOG_NAME_SEGMENT_RE.sub(r" - \1", text).strip()
-
-DEFAULT_TIMELINE_FILE = "eventname-ts.json"
 
 IMAGE_DATE_TAGS = (
 	"SubSecCreateDate",
@@ -129,6 +128,7 @@ DATE_TAG_OFFSET_TAG = {
 
 INSPECT_TAGS = IMAGE_DATE_TAGS + EXIF_OFFSET_TAGS + SERIAL_NUMBER_TAGS + (
 	"Keywords",
+	"HierarchicalSubject",
 	"Rating",
 	"Model",
 	"CameraModelName",
@@ -507,6 +507,7 @@ def normalize_exif_json(exif_json, filename, *, session=None):
 		image_keywords = list()
 	image_keywords = set(image_keywords)
 	image_keywords.discard(None)
+	image_keywords.update(_normalize_exif_list(exif_json.get("HierarchicalSubject")))
 	exif_json["original_x_keywords"] = x_keywords(image_keywords)
 	exif_json["Keywords"] = image_keywords
 	exif_json["original_iptc_metadata"] = read_iptc_metadata(exif_json)
@@ -518,29 +519,11 @@ def get_exif(filename, *, session=None):
 	exif_json = fetch_exif_tags(filename, INSPECT_TAGS, session=session)
 	return normalize_exif_json(exif_json, filename, session=session)
 
-def is_x_keyword(keyword):
-	return isinstance(keyword, str) and keyword.startswith("X-")
-
 def x_keywords(keywords):
 	return {keyword for keyword in keywords if keyword and is_x_keyword(keyword)}
 
 def preserve_non_x_keywords(keywords):
 	return {keyword for keyword in keywords if keyword and not is_x_keyword(keyword)}
-
-def format_keyword(field, value):
-	if value is None:
-		return None
-	text = str(value).strip()
-	if not text:
-		return None
-	if text.lower() in {"none", "unspecified"} and field != "handler":
-		return None
-	if field == "dog":
-		text = normalize_quoted_dog_name(text)
-	elif field == "team" and " n " in text:
-		handler_part, dog_part = text.split(" n ", 1)
-		text = "{} n {}".format(handler_part.strip(), normalize_quoted_dog_name(dog_part.strip()))
-	return "X-{}: {}".format(field, text)
 
 def parse_labeled_name(value):
 	trimmed = value.strip()
@@ -890,6 +873,29 @@ def format_keyword_remove_arg(keyword):
 	escaped = str(keyword).replace("\\", "\\\\").replace('"', '\\"')
 	return '-Keywords-="{}"'.format(escaped)
 
+def format_hierarchical_subject_add_arg(keyword):
+	escaped = str(keyword).replace("\\", "\\\\").replace('"', '\\"')
+	return '-XMP-lr:HierarchicalSubject+="{}"'.format(escaped)
+
+def format_hierarchical_subject_remove_arg(keyword):
+	escaped = str(keyword).replace("\\", "\\\\").replace('"', '\\"')
+	return '-XMP-lr:HierarchicalSubject-="{}"'.format(escaped)
+
+def append_keyword_write_args(cmd, keyword, *, remove=False):
+	if remove:
+		for form in sorted(keyword_write_forms(keyword)):
+			cmd.append(format_keyword_remove_arg(form))
+			cmd.append(format_hierarchical_subject_remove_arg(form))
+		return
+	field = keyword_x_field(keyword)
+	value = keyword_x_value(keyword)
+	if field is None or value is None:
+		cmd.append(format_keyword_arg(keyword))
+		return
+	canonical = "X-{}|{}".format(field, value)
+	cmd.append(format_keyword_arg(canonical))
+	cmd.append(format_hierarchical_subject_add_arg(canonical))
+
 IPTC_SCALAR_FIELDS = (
 	"headline",
 	"creator",
@@ -943,15 +949,9 @@ def read_iptc_metadata(exif_json):
 def existing_copyright(exif_json):
 	return first_exif_value(exif_json, "Copyright", "Rights", "CopyrightNotice")
 
-def keyword_x_value(keyword):
-	if not isinstance(keyword, str) or ":" not in keyword:
-		return None
-	value = keyword.split(":", 1)[1].strip()
-	return value or None
-
 def image_id_from_keywords(keywords):
 	for keyword in keywords:
-		if isinstance(keyword, str) and keyword.startswith("X-img:"):
+		if keyword_x_field(keyword) == "img":
 			return keyword_x_value(keyword)
 	return None
 
@@ -1145,31 +1145,6 @@ def parse_verbosity(value):
 		"Invalid --verbosity value: {} (expected quiet or full)".format(value)
 	)
 
-def strip_match_x_keywords(keywords):
-	prefixes = (
-		"X-dog:",
-		"X-handler:",
-		"X-team:",
-		"X-photog:",
-		"X-photoreq:",
-		"X-msg:",
-		"X-dis:",
-		"X-loc:",
-		"X-seq:",
-		"X-duel:",
-	)
-	stripped = set()
-	for keyword in keywords:
-		if not keyword:
-			continue
-		if keyword.startswith("X-id-"):
-			continue
-		if any(keyword.startswith(prefix) for prefix in prefixes):
-			continue
-		stripped.add(keyword)
-	return stripped
-
-
 def resolved_staging_dir_name(keywords, *, match=None):
 	primary_dir = primary_staging_dir_from_match(match)
 	if primary_dir is not None:
@@ -1281,9 +1256,9 @@ def put_exif(exif_json, filename, output_path=None, *, session=None):
 	final_x_keywords = x_keywords(exif_json.get("Keywords", set()))
 	if original_x_keywords != final_x_keywords:
 		for keyword in original_x_keywords:
-			cmd.append(format_keyword_remove_arg(keyword))
+			append_keyword_write_args(cmd, keyword, remove=True)
 		for keyword in final_x_keywords:
-			cmd.append(format_keyword_arg(keyword))
+			append_keyword_write_args(cmd, keyword, remove=False)
 
 	cmd.extend(
 		iptc_metadata_args(
@@ -2922,7 +2897,7 @@ def assign_image_keyword(image_json):
 	image_json["Keywords"] = {
 		keyword
 		for keyword in image_json["Keywords"]
-		if not (isinstance(keyword, str) and keyword.startswith("X-img:"))
+		if keyword_x_field(keyword) != "img"
 	}
 	img_keyword = format_keyword("img", generate_short_id())
 	image_json["Keywords"].add(img_keyword)
@@ -2933,7 +2908,7 @@ def assign_original_filename_keyword(image_json, original_filename):
 	image_json["Keywords"] = {
 		keyword
 		for keyword in image_json["Keywords"]
-		if not (isinstance(keyword, str) and keyword.startswith("X-ofn:"))
+		if keyword_x_field(keyword) != "ofn"
 	}
 	ofn_keyword = format_keyword("ofn", strip_timestamp_prefix(original_filename))
 	if ofn_keyword:
@@ -3613,7 +3588,7 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 							match_keywords = {
 								keyword
 								for keyword in match_keywords
-								if not keyword.startswith(("X-dog:", "X-handler:", "X-team:"))
+								if keyword_x_field(keyword) not in {"dog", "handler", "team"}
 							}
 							match_keywords.update(duel_keywords)
 						if match_keywords:
