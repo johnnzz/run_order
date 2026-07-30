@@ -86,7 +86,7 @@ def exiftool_error_message(cmd_out):
 	return cmd_out.stderr.strip() or "no output"
 
 def fetch_keywords(filename, *, include_creator=False):
-	tags = ["-Keywords"]
+	tags = ["-Keywords", "-HierarchicalSubject"]
 	if include_creator:
 		tags.append("-Creator")
 	cmd = ["exiftool", "-json"] + tags + [filename]
@@ -103,10 +103,20 @@ def fetch_keywords(filename, *, include_creator=False):
 			"exiftool failed for {}: {}".format(filename, exiftool_error_message(cmd_out))
 		)
 	exif_json = json.loads(cmd_out.stdout)[0]
+	keywords = exif_json.get("Keywords")
+	hierarchical = exif_json.get("HierarchicalSubject")
+	if keywords is None:
+		merged = hierarchical
+	elif hierarchical is None:
+		merged = keywords
+	elif isinstance(keywords, list):
+		merged = list(keywords) + list(hierarchical if isinstance(hierarchical, list) else [hierarchical])
+	else:
+		merged = [keywords] + list(hierarchical if isinstance(hierarchical, list) else [hierarchical])
 	if not include_creator:
-		return exif_json.get("Keywords")
+		return merged
 	return {
-		"keywords": exif_json.get("Keywords"),
+		"keywords": merged,
 		"creator": exif_json.get("Creator"),
 	}
 
