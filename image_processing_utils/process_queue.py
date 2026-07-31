@@ -849,11 +849,47 @@ def sequence_group_key(match, image_time, time_series):
 def generate_short_id():
 	return uuid.uuid4().hex[:8]
 
+_LABELED_ENTITY_CODE_RE = re.compile(r"^(.*) \((\d{5})\)$")
+
+
+def photographer_initials(name):
+	"""Return 1-2 letter initials from a photographer display name."""
+	if not isinstance(name, str) or not name.strip():
+		return "XX"
+	base = name.strip()
+	labeled = _LABELED_ENTITY_CODE_RE.fullmatch(base)
+	if labeled is not None:
+		base = labeled.group(1).strip()
+	parts = [part for part in base.split() if part]
+	if not parts:
+		return "XX"
+	if len(parts) == 1:
+		return parts[0][0].upper()
+	return (parts[0][0] + parts[-1][0]).upper()
+
+def _sequence_display_time(moment, time_series):
+	"""Wall-clock time for sequence IDs (sheet/local timezone when aware)."""
+	if moment is None:
+		return None
+	if moment.tzinfo is None:
+		return moment
+	display_tz = sheet_timezone_from_time_series(time_series) or naive_source_timezone()
+	return moment.astimezone(display_tz)
+
+def format_sequence_id(check_in_time, photographer_name, time_series=None):
+	"""Build X-seq value: <yy><mm><dd>-<hh><mm>.<ss><ms>-<initials>."""
+	display = _sequence_display_time(check_in_time, time_series)
+	if display is None:
+		return None
+	stamp = display.strftime("%y%m%d-%H%M.%S")
+	milliseconds = display.microsecond // 1000
+	return "{}{:03d}-{}".format(stamp, milliseconds, photographer_initials(photographer_name))
+
 def build_sequence_ids(queue_entries, time_series):
 	sorted_entries = sorted(queue_entries, key=lambda item: item[1]["image_time"])
 	sequence_ids = {}
 	current_key = object()
-	current_uuid = None
+	current_seq_id = None
 
 	for queue_file, _image_json in sorted_entries:
 		match = resolve_photo_match(
@@ -865,8 +901,15 @@ def build_sequence_ids(queue_entries, time_series):
 		key = sequence_group_key(match, _image_json["image_time"], time_series)
 		if key != current_key:
 			current_key = key
-			current_uuid = generate_short_id() if key is not None else None
-		sequence_ids[queue_file] = current_uuid
+			if key is None or match is None:
+				current_seq_id = None
+			else:
+				current_seq_id = format_sequence_id(
+					match.get("check_in_time"),
+					match.get("photographer"),
+					time_series,
+				)
+		sequence_ids[queue_file] = current_seq_id
 
 	return sequence_ids
 
@@ -2555,6 +2598,7 @@ def _build_photo_match_result(
 			"message_to_photographer": None,
 			"discipline": discipline,
 			"event": event_name,
+			"check_in_time": None,
 		}
 
 	handler_name = check_in.get("handler")
@@ -2577,6 +2621,7 @@ def _build_photo_match_result(
 		"message_to_photographer": message_to_photographer,
 		"discipline": discipline,
 		"event": event_name,
+		"check_in_time": check_in.get("time"),
 	}
 
 def resolve_photo_match_with_explanation(image_time, camera_serial, time_series, *, queue_file=None):
