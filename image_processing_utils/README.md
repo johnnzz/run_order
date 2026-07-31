@@ -278,9 +278,13 @@ When a photo match is found, the script also writes **IPTC Core** metadata via e
 
 **Dueling Dogs:** `X-duel|` plus per-lane dog/handler/team keywords when both dock lanes have dogs checked in.
 
-### Sequence grouping (`X-seq:`)
+### Sequence grouping (`X-seq|`)
 
-Queue images sorted by capture time; consecutive images sharing the same location, discipline, and dog (or duel dock + dogs) receive the same 8-char hex `X-seq:` value.
+Queue images sorted by capture time; consecutive images sharing the same location, discipline, and dog (or duel dock + dogs) receive the same `X-seq|` value derived from the matched check-in:
+
+`<yy><mm><dd>-<hh><mm>.<ss><ms>-<photographer initials>`
+
+Example: `X-seq|260731-1614.30512-JN` for a 2026-07-31 16:14:30.512 check-in by John Navitsky.
 
 ### Safety and idempotency
 
