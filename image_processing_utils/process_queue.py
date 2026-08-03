@@ -135,7 +135,9 @@ INSPECT_TAGS = IMAGE_DATE_TAGS + EXIF_OFFSET_TAGS + SERIAL_NUMBER_TAGS + (
 	"Model",
 	"CameraModelName",
 	"Subject",
+	"Title",
 	"Headline",
+	"Description",
 	"Creator",
 	"Credit",
 	"Rights",
@@ -944,7 +946,9 @@ def append_keyword_write_args(cmd, keyword, *, remove=False):
 	cmd.append(format_hierarchical_subject_add_arg(canonical))
 
 IPTC_SCALAR_FIELDS = (
+	"title",
 	"headline",
+	"caption",
 	"creator",
 	"credit",
 	"rights",
@@ -956,7 +960,9 @@ IPTC_SCALAR_FIELDS = (
 )
 
 IPTC_FIELD_TAGS = {
+	"title": "Title",
 	"headline": "Headline",
+	"caption": "Description",
 	"creator": "Creator",
 	"credit": "Credit",
 	"rights": "Rights",
@@ -966,6 +972,9 @@ IPTC_FIELD_TAGS = {
 	"source": "Source",
 	"transmission_reference": "TransmissionReference",
 }
+
+# Fields rewritten with clear+set on replace_all / force refresh so Lightroom sees updates.
+IPTC_FORCE_REFRESH_FIELDS = frozenset({"headline", "caption"})
 
 def _normalize_exif_list(value):
 	if value is None:
@@ -1030,6 +1039,15 @@ def build_iptc_headline(match, time_series, duel_keyword):
 		return "{} compete in {} {}".format(team, org, event_name)
 	return None
 
+def build_iptc_title(match, image_json):
+	if match is None:
+		return None
+	team = _iptc_text(match.get("team"))
+	image_id = image_id_from_keywords(image_json.get("Keywords", set()))
+	if team and image_id:
+		return "{} - {}".format(team, image_id)
+	return None
+
 def build_iptc_subjects(time_series, match):
 	match = match or {}
 	candidates = (
@@ -1063,6 +1081,12 @@ def build_iptc_metadata(time_series, match, image_json, duel_keyword):
 		headline = build_iptc_headline(match, time_series, duel_keyword)
 		if headline:
 			metadata["headline"] = headline
+			# Lightroom Caption maps to Description / Caption-Abstract.
+			metadata["caption"] = headline
+
+		title = build_iptc_title(match, image_json)
+		if title:
+			metadata["title"] = title
 
 		photographer = _iptc_text(match.get("photographer"))
 		if photographer:
@@ -1117,7 +1141,7 @@ def iptc_metadata_args(original_iptc, final_iptc, *, replace_all=False, force_he
 		for field, tag in IPTC_FIELD_TAGS.items():
 			old_value = original_iptc.get(field)
 			new_value = final_iptc.get(field)
-			if field == "headline":
+			if field in IPTC_FORCE_REFRESH_FIELDS:
 				if new_value:
 					args.append(format_exiftool_clear_arg(tag))
 					args.append(format_exiftool_set_arg(tag, new_value))
@@ -1135,7 +1159,7 @@ def iptc_metadata_args(original_iptc, final_iptc, *, replace_all=False, force_he
 		old_value = original_iptc.get(field)
 		if not new_value:
 			continue
-		if field == "headline" and force_headline_refresh:
+		if field in IPTC_FORCE_REFRESH_FIELDS and force_headline_refresh:
 			args.append(format_exiftool_clear_arg(tag))
 			args.append(format_exiftool_set_arg(tag, new_value))
 			continue
