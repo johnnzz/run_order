@@ -169,12 +169,13 @@ process_queue.py [options]
 | `-r`, `--rating NUM` | *(none)* | Set star rating on images that have none; omit to leave ratings unchanged |
 | `--status` | | Print queue/processed/backup paths and file counts |
 | `--process` | | Process all files in the queue |
+| `--in-place` | | Write EXIF/IPTC on the queue file; do not rename, move, or backup |
 | `--log FILE` | `process_queue-<pid>.log` | Log file path |
 | `--force` | | Always overwrite existing destination files, even when MD5 matches |
 | `--safe` | | Write to `_N` suffix paths instead of overwriting |
 | `-h`, `--help` | | Show usage |
 
-`--force` and `--safe` cannot be used together.
+`--force` and `--safe` cannot be used together. `--in-place` cannot be combined with `--force` or `--safe`.
 
 ### Operating modes
 
@@ -189,8 +190,10 @@ process_queue.py [options]
 3. Read EXIF from each file via exiftool
 4. Match photo time + camera serial to run-order data
 5. Write keywords via exiftool (and rating only when `-r` / `--rating` is set)
-6. Optionally back up the original (only when `-b` is set)
-7. Rename and move the file into processed
+6. Optionally back up the original (only when `-b` is set; skipped with `--in-place`)
+7. Rename and move the file into processed (skipped with `--in-place`)
+
+**`--process --in-place`** — Same matching and EXIF/IPTC writes, but the queue file keeps its path and name. Pass-through and before-first-check-in files are also left in the queue unchanged.
 
 ### Destination file behavior (`--force` / `--safe`)
 

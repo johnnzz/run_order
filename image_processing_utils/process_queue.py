@@ -10,7 +10,9 @@ and uses the data present in the time-series file to identify the handler, dog
 and event data, and then encodes that data in the image using exiftool keywords.
 
 Once the file has been processed, it is renamed and moved to a processed directory,
-and optionally an unmodified version is placed in a backup directory.
+and optionally an unmodified version is placed in a backup directory. With
+``--in-place``, metadata is written on the queue file and the file is left in place
+(no rename, move, or backup).
 
 When --process completes, a photo summary JSON file named <event>-ps.json is written
 next to the timeseries file. Each entry records the image name, capture timestamp,
@@ -38,6 +40,7 @@ Options:
   -r, --rating NUM        Set rating on images that have none (omit to leave ratings unchanged).
   --status                Print directory paths and file counts.
   --process               Process files in the queue directory.
+  --in-place              Write EXIF/IPTC in the queue file; do not rename, move, or backup.
   --log FILE              Write log output to FILE (stdout only when omitted).
   --force                 Always overwrite existing destination files.
   --safe                  Write to _N suffix paths instead of overwriting.
@@ -3426,7 +3429,20 @@ def write_photo_summary(path, summary):
 	return target
 
 
-def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rating=None, *, force=False, safe=False, timeline_path=None, output_mode=OUTPUT_MODE_FLAT, verbosity=VERBOSITY_QUIET):
+def process_queue(
+	queue_dir,
+	processed_dir,
+	backup_dir,
+	time_series,
+	default_rating=None,
+	*,
+	force=False,
+	safe=False,
+	in_place=False,
+	timeline_path=None,
+	output_mode=OUTPUT_MODE_FLAT,
+	verbosity=VERBOSITY_QUIET,
+):
 	install_graceful_interrupt_handler()
 	processing_started = time.perf_counter()
 	logger.info("Scanning queue directory %s", queue_dir)
@@ -3517,29 +3533,44 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 			)
 
 			if passthrough_files:
-				logger.info("Moving pass-through files to processed without modification...")
-				print_quiet_status(
-					"Moving {} pass-through file(s)...".format(len(passthrough_files)),
-					verbosity=verbosity,
-				)
+				if in_place:
+					logger.info(
+						"Leaving %d pass-through file(s) in queue (--in-place; no metadata changes)",
+						len(passthrough_files),
+					)
+					print_quiet_status(
+						"Leaving {} pass-through file(s) in queue...".format(len(passthrough_files)),
+						verbosity=verbosity,
+					)
+				else:
+					logger.info("Moving pass-through files to processed without modification...")
+					print_quiet_status(
+						"Moving {} pass-through file(s)...".format(len(passthrough_files)),
+						verbosity=verbosity,
+					)
 				for index, (queue_file, reason) in enumerate(passthrough_files, start=1):
 					file = os.path.basename(queue_file)
-					log_batch_progress("Moving pass-through files", index, len(passthrough_files))
-					logger.info("Pass-through %d/%d: %s", index, len(passthrough_files), file)
-					processed_file, _moved = move_queue_file_unmodified(
-						queue_file,
-						processed_dir,
-						backup_dir,
-						force=force,
-						safe=safe,
-						reason=reason,
-					)
+					if in_place:
+						log_batch_progress("Leaving pass-through files", index, len(passthrough_files))
+						logger.info("Pass-through %d/%d (in-place): %s", index, len(passthrough_files), file)
+						processed_file = queue_file
+					else:
+						log_batch_progress("Moving pass-through files", index, len(passthrough_files))
+						logger.info("Pass-through %d/%d: %s", index, len(passthrough_files), file)
+						processed_file, _moved = move_queue_file_unmodified(
+							queue_file,
+							processed_dir,
+							backup_dir,
+							force=force,
+							safe=safe,
+							reason=reason,
+						)
 					photo_summary_entries.append(
 						build_passthrough_photo_summary_entry(
 							queue_file,
 							reason,
 							processed_file,
-							processed_dir=processed_dir,
+							processed_dir=queue_dir if in_place else processed_dir,
 						)
 					)
 					logger.info("")
@@ -3547,10 +3578,16 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 
 			if not queue_entries:
 				if passthrough_files:
-					logger.info(
-						"No processable images in queue; moved %d pass-through file(s) to processed",
-						len(passthrough_files),
-					)
+					if in_place:
+						logger.info(
+							"No processable images in queue; left %d pass-through file(s) in place",
+							len(passthrough_files),
+						)
+					else:
+						logger.info(
+							"No processable images in queue; moved %d pass-through file(s) to processed",
+							len(passthrough_files),
+						)
 				else:
 					logger.info("No readable images in queue directory %s", queue_dir)
 			else:
@@ -3585,14 +3622,23 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 						print_quiet_photo_line(queue_file, image_json, match)
 
 					if is_before_first_team_check_in(image_json["image_time"], time_series):
-						processed_file, _moved = move_queue_file_unmodified(
-							queue_file,
-							processed_dir,
-							backup_dir,
-							force=force,
-							safe=safe,
-							reason="Before first team check-in",
-						)
+						if in_place:
+							logger.info(
+								"* Leaving %s in queue (--in-place; before first team check-in)",
+								file,
+							)
+							processed_file = queue_file
+							summary_root = queue_dir
+						else:
+							processed_file, _moved = move_queue_file_unmodified(
+								queue_file,
+								processed_dir,
+								backup_dir,
+								force=force,
+								safe=safe,
+								reason="Before first team check-in",
+							)
+							summary_root = processed_dir
 						photo_summary_entries.append(
 							build_photo_summary_entry(
 								queue_file,
@@ -3602,7 +3648,7 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 								processed_image=os.path.basename(processed_file),
 								processed_path=photo_summary_relative_processed_path(
 									processed_file,
-									processed_dir,
+									summary_root,
 								),
 								staging_dirs=photo_summary_staging_dirs(
 									image_json.get("Keywords") or [],
@@ -3707,49 +3753,56 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 								image_json["image_time"],
 							)
 
-					new_name = build_processed_filename(image_json["image_time"], file)
-					output_name, processed_file, backup_file = resolve_processed_paths(
-						processed_dir,
-						backup_dir,
-						new_name,
-						image_json["Keywords"],
-						output_mode=output_mode,
-						safe=safe,
-						match=match,
-					)
-					logger.info("* Renaming %s", output_name)
 					assign_image_keyword(image_json)
 					assign_original_filename_keyword(image_json, file)
 					assign_iptc_metadata(image_json, time_series, match, duel_keyword)
-					put_exif(image_json, queue_file, processed_file, session=exif_session)
-					if backup_dir and backup_file:
-						backup_file, backed_up = copy_destination(
-							queue_file,
-							backup_file,
-							force=force,
-							safe=safe,
-						)
-						if backed_up:
-							logger.info("* Backing up to %s", backup_file)
-					processed_file, processed = move_destination(
-						queue_file,
-						processed_file,
-						force=force,
-						safe=safe,
-					)
-					if processed:
-						logger.info("* Output: %s", processed_file)
-					if output_mode == OUTPUT_MODE_SUBDIR and duel_keyword is not None:
-						copy_duel_photo_to_additional_staging_subdirs(
-							processed_file,
-							os.path.basename(processed_file),
+					if in_place:
+						logger.info("* Updating metadata in place: %s", file)
+						put_exif(image_json, queue_file, queue_file, session=exif_session)
+						processed_file = queue_file
+						summary_root = queue_dir
+					else:
+						new_name = build_processed_filename(image_json["image_time"], file)
+						output_name, processed_file, backup_file = resolve_processed_paths(
 							processed_dir,
 							backup_dir,
+							new_name,
 							image_json["Keywords"],
-							primary_staging_dir_from_match(match),
+							output_mode=output_mode,
+							safe=safe,
+							match=match,
+						)
+						logger.info("* Renaming %s", output_name)
+						put_exif(image_json, queue_file, processed_file, session=exif_session)
+						if backup_dir and backup_file:
+							backup_file, backed_up = copy_destination(
+								queue_file,
+								backup_file,
+								force=force,
+								safe=safe,
+							)
+							if backed_up:
+								logger.info("* Backing up to %s", backup_file)
+						processed_file, processed = move_destination(
+							queue_file,
+							processed_file,
 							force=force,
 							safe=safe,
 						)
+						if processed:
+							logger.info("* Output: %s", processed_file)
+						if output_mode == OUTPUT_MODE_SUBDIR and duel_keyword is not None:
+							copy_duel_photo_to_additional_staging_subdirs(
+								processed_file,
+								os.path.basename(processed_file),
+								processed_dir,
+								backup_dir,
+								image_json["Keywords"],
+								primary_staging_dir_from_match(match),
+								force=force,
+								safe=safe,
+							)
+						summary_root = processed_dir
 					photo_summary_entries.append(
 						build_photo_summary_entry(
 							queue_file,
@@ -3759,7 +3812,7 @@ def process_queue(queue_dir, processed_dir, backup_dir, time_series, default_rat
 							processed_image=os.path.basename(processed_file),
 							processed_path=photo_summary_relative_processed_path(
 								processed_file,
-								processed_dir,
+								summary_root,
 							),
 							staging_dirs=photo_summary_staging_dirs(
 								image_json["Keywords"],
@@ -3803,13 +3856,19 @@ def main():
 	if args["--process"]:
 		if args["--force"] and args["--safe"]:
 			raise SystemExit("Cannot use --force and --safe together")
+		if args["--in-place"] and (args["--force"] or args["--safe"]):
+			raise SystemExit("Cannot use --in-place with --force or --safe")
 		timeline_path = args["--timeline"] or DEFAULT_TIMELINE_FILE
 		merge_path = args["--timeline2"] or None
+		in_place = bool(args["--in-place"])
 		if verbosity == VERBOSITY_FULL:
 			logger.info("Queue directory: %s", queue_dir)
-			logger.info("Processed directory: %s", processed_dir)
-			if backup_dir:
-				logger.info("Backup directory: %s", backup_dir)
+			if in_place:
+				logger.info("In-place mode: metadata only (no rename/move/backup)")
+			else:
+				logger.info("Processed directory: %s", processed_dir)
+				if backup_dir:
+					logger.info("Backup directory: %s", backup_dir)
 			logger.info("Loading time series from %s", timeline_path)
 			if merge_path:
 				logger.info("Merging secondary time series from %s", merge_path)
@@ -3820,19 +3879,23 @@ def main():
 					"Merging secondary time series from {}".format(merge_path),
 					verbosity=verbosity,
 				)
+			if in_place:
+				print_quiet_status("In-place mode: metadata only", verbosity=verbosity)
 		time_series = load_time_series(timeline_path, merge_path=merge_path)
 		output_mode = parse_output_mode(args["--output"])
 		if verbosity == VERBOSITY_FULL:
-			logger.info("Output layout: %s", output_mode)
+			if not in_place:
+				logger.info("Output layout: %s", output_mode)
 			logger.info("Starting queue processing...")
 		process_queue(
 			queue_dir=queue_dir,
 			processed_dir=processed_dir,
-			backup_dir=backup_dir,
+			backup_dir=None if in_place else backup_dir,
 			time_series=time_series,
 			default_rating=int(args["--rating"]) if args["--rating"] is not None else None,
 			force=args["--force"],
 			safe=args["--safe"],
+			in_place=in_place,
 			timeline_path=timeline_path,
 			output_mode=output_mode,
 			verbosity=verbosity,
