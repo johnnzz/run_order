@@ -260,7 +260,9 @@ When a photo match is found, the script also writes **IPTC Core** metadata via e
 
 | IPTC field | Source |
 |------------|--------|
+| Title | `{team} - {X-img}` (Lightroom Title / `dc:title`) |
 | Headline | `{team} compete in {org} {event}`; duel → `{X-duel} in {discipline} at {event}` |
+| Caption | Same text as Headline (Lightroom Caption / `dc:description`) |
 | Location | `event.venue` when present |
 | City / State | from event metadata |
 | Creator / Credit | photographer name |
