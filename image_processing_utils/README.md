@@ -273,7 +273,7 @@ When a photo match is found, the script also writes **IPTC Core** metadata via e
 | Source | `{event} ({dogsportphoto_code})` |
 | Transmission Reference | `X-img` UUID |
 
-`X-*` keywords are written only to `XMP-lr:HierarchicalSubject` using `X-<field>|<value>` paths (for example `X-team|Handler n Dog`). Reprocessing removes legacy flat `X-<field>: <value>` IPTC Keywords and any old flattened `XMP-dc:Subject` nodes from prior writes. Parsers accept both colon and pipe forms when reading older files.
+`X-*` keywords are written only to `XMP-lr:HierarchicalSubject` using `X-<field>|<value>` paths (for example `X-team|Handler n Dog`). The same data is also written as a parallel multi-level tree `dogsportphoto|<field>|<value>` (for example `dogsportphoto|team|Handler n Dog`), where `<field>` is the keyword name without the `X-` prefix. Reprocessing removes legacy flat `X-<field>: <value>` IPTC Keywords and any old flattened `XMP-dc:Subject` nodes from prior writes. Parsers accept both colon and pipe forms when reading older files; staging and matching still key off the `X-*` paths.
 
 **Event keywords:** `X-event|`, `X-org|`, `X-club|`, `X-venue|`, `X-type|`, `X-city|`
 

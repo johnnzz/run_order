@@ -81,8 +81,23 @@ def canonical_x_keyword(keyword):
 	return "X-{}|{}".format(field, value)
 
 
+DOGSPORTPHOTO_KEYWORD_ROOT = "dogsportphoto"
+
+
+def dogsportphoto_hierarchical_path(keyword):
+	"""Return dogsportphoto|<field>|<value> path mirroring an X-* keyword."""
+	field, value = parse_x_keyword(keyword)
+	if field is None or not value:
+		return None
+	return "{}|{}|{}".format(DOGSPORTPHOTO_KEYWORD_ROOT, field, value)
+
+
 def hierarchical_subject_entries(keyword):
-	"""Return hierarchical path and legacy dc:Subject nodes to scrub on reprocess."""
+	"""Return hierarchical path and legacy dc:Subject nodes to scrub on reprocess.
+
+	Also includes the parallel dogsportphoto|<field>|<value> tree and its parent
+	nodes so reprocessing can scrub flattened Subject leftovers.
+	"""
 	canonical = canonical_x_keyword(keyword)
 	if canonical is None:
 		return None, set()
@@ -90,7 +105,12 @@ def hierarchical_subject_entries(keyword):
 	if field is None or not value:
 		return None, set()
 	parent = "X-{}".format(field)
-	return canonical, {parent, value, canonical}
+	dsp_path = dogsportphoto_hierarchical_path(canonical)
+	dsp_mid = "{}|{}".format(DOGSPORTPHOTO_KEYWORD_ROOT, field)
+	subject_nodes = {parent, value, canonical, DOGSPORTPHOTO_KEYWORD_ROOT, dsp_mid}
+	if dsp_path:
+		subject_nodes.add(dsp_path)
+	return canonical, subject_nodes
 
 
 def keyword_removal_forms(keyword):
