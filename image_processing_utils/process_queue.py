@@ -371,6 +371,31 @@ def normalize_iptc_scalar(value):
 	return parts[0] if parts else None
 
 
+def read_iptc_raw_value(exif_json, tag):
+	"""Return the raw EXIF/IPTC value without collapsing duplicates or quotes."""
+	value = exif_json.get(tag)
+	if value is None:
+		return None
+	if isinstance(value, (list, tuple, set)):
+		parts = [
+			item
+			for item in value
+			if item is not None and str(item).strip()
+		]
+		return parts if parts else None
+	text = str(value).strip()
+	return text or None
+
+
+def iptc_stored_form_is_clean(raw_value, normalized):
+	"""True when the on-file value is already a single clean scalar."""
+	if raw_value is None or not normalized:
+		return False
+	if isinstance(raw_value, (list, tuple, set)):
+		return False
+	return str(raw_value).strip() == normalized
+
+
 def first_exif_value(exif_json, *tags):
 	for tag in tags:
 		value = exif_json.get(tag)
@@ -1014,8 +1039,8 @@ def _normalize_exif_list(value):
 def read_iptc_metadata(exif_json):
 	metadata = {}
 	for field, tag in IPTC_FIELD_TAGS.items():
-		value = first_exif_value(exif_json, tag)
-		if value:
+		value = read_iptc_raw_value(exif_json, tag)
+		if value is not None:
 			metadata[field] = value
 	subjects = _normalize_exif_list(exif_json.get("Subject"))
 	if subjects:
@@ -1158,7 +1183,8 @@ def iptc_metadata_args(original_iptc, final_iptc, *, replace_all=False, force_he
 	args = []
 	if replace_all:
 		for field, tag in IPTC_FIELD_TAGS.items():
-			old_value = normalize_iptc_scalar(original_iptc.get(field))
+			raw_old = original_iptc.get(field)
+			old_value = normalize_iptc_scalar(raw_old)
 			new_value = normalize_iptc_scalar(final_iptc.get(field))
 			if field in IPTC_FORCE_REFRESH_FIELDS:
 				if new_value:
@@ -1167,30 +1193,35 @@ def iptc_metadata_args(original_iptc, final_iptc, *, replace_all=False, force_he
 				elif old_value:
 					args.append(format_exiftool_clear_arg(tag))
 				continue
-			if new_value and old_value == new_value:
+			# Skip only when logical value matches AND on-file form is already clean.
+			if (
+				new_value
+				and old_value == new_value
+				and iptc_stored_form_is_clean(raw_old, old_value)
+			):
 				continue
 			if old_value and not new_value:
 				args.append(format_exiftool_clear_arg(tag))
 				continue
 			if new_value:
-				# Clear-then-set avoids leftover multi-value Creator/list entries.
+				# Clear-then-set collapses duplicated/quoted Creator list values.
 				args.append(format_exiftool_clear_arg(tag))
 				args.append(format_exiftool_set_arg(tag, new_value))
 		return args
 
 	for field, tag in IPTC_FIELD_TAGS.items():
+		raw_old = original_iptc.get(field)
 		new_value = normalize_iptc_scalar(final_iptc.get(field))
-		old_value = normalize_iptc_scalar(original_iptc.get(field))
+		old_value = normalize_iptc_scalar(raw_old)
 		if not new_value:
 			continue
 		if field in IPTC_FORCE_REFRESH_FIELDS and force_headline_refresh:
 			args.append(format_exiftool_clear_arg(tag))
 			args.append(format_exiftool_set_arg(tag, new_value))
 			continue
-		if new_value == old_value:
+		if new_value == old_value and iptc_stored_form_is_clean(raw_old, old_value):
 			continue
-		if old_value:
-			args.append(format_exiftool_clear_arg(tag))
+		args.append(format_exiftool_clear_arg(tag))
 		args.append(format_exiftool_set_arg(tag, new_value))
 	return args
 
