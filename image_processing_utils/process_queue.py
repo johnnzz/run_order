@@ -20,7 +20,7 @@ and matched handler and dog.
 
 Each processed file will have hierarchical EXIF keywords under dogsportphoto.com,
 such as dogsportphoto.com|team|Handler n Dog, grouped under parent nodes in
-Lightroom. Legacy X-* and dogsportphoto|* keywords are removed on reprocess.
+Lightroom. Writes are additive; legacy X-* / dogsportphoto|* keywords are left in place.
 Results can be reviewed with the summarize_dir.py script.
 
 Portable and self-contained: only requires docopt (stdlib otherwise).
@@ -86,11 +86,10 @@ from stage_into_dirs import (
 )
 from x_keywords import (
 	format_keyword,
-	hierarchical_subject_entries,
 	is_match_x_keyword,
 	is_x_keyword,
 	canonical_x_keyword,
-	keyword_removal_forms,
+	canonicalize_managed_keywords,
 	keyword_x_field,
 	keyword_x_value,
 	normalize_quoted_dog_name,
@@ -919,30 +918,12 @@ def build_sequence_ids(queue_entries, time_series):
 
 	return sequence_ids
 
-def format_keyword_remove_arg(keyword):
-	# Pass as a single argv element; do not wrap in quotes (subprocess is not a shell).
-	return "-Keywords-={}".format(keyword)
-
 def format_hierarchical_subject_add_arg(keyword):
+	# Pass as a single argv element; do not wrap in quotes (subprocess is not a shell).
 	return "-XMP-lr:HierarchicalSubject+={}".format(keyword)
 
-def format_hierarchical_subject_remove_arg(keyword):
-	return "-XMP-lr:HierarchicalSubject-={}".format(keyword)
-
-def format_subject_remove_arg(value):
-	return "-XMP-dc:Subject-={}".format(value)
-
-def append_keyword_write_args(cmd, keyword, *, remove=False):
-	canonical, subject_nodes = hierarchical_subject_entries(keyword)
-	if remove:
-		for form in sorted(keyword_removal_forms(keyword)):
-			cmd.append(format_keyword_remove_arg(form))
-		# subject_nodes includes every HierarchicalSubject path variant to scrub
-		for subject in sorted(subject_nodes):
-			if "|" in subject:
-				cmd.append(format_hierarchical_subject_remove_arg(subject))
-			cmd.append(format_subject_remove_arg(subject))
-		return
+def append_keyword_write_args(cmd, keyword):
+	canonical = canonical_x_keyword(keyword)
 	if canonical is None:
 		return
 	cmd.append(format_hierarchical_subject_add_arg(canonical))
@@ -1324,13 +1305,16 @@ def put_exif(exif_json, filename, output_path=None, *, session=None):
 
 	cmd = ["-m", "-overwrite_original"]
 
-	original_x_keywords = exif_json.get("original_x_keywords", set())
-	final_x_keywords = x_keywords(exif_json.get("Keywords", set()))
-	if original_x_keywords != final_x_keywords:
-		for keyword in original_x_keywords:
-			append_keyword_write_args(cmd, keyword, remove=True)
-		for keyword in final_x_keywords:
-			append_keyword_write_args(cmd, keyword, remove=False)
+	original_x_keywords = x_keywords(exif_json.get("original_x_keywords", set()))
+	# Only dogsportphoto.com|* managed paths are written; never X-* or dogsportphoto|*.
+	# Legacy forms are left in place; we only add missing dogsportphoto.com paths.
+	final_keywords = canonicalize_managed_keywords(exif_json.get("Keywords", set()))
+	exif_json["Keywords"] = final_keywords
+	final_x_keywords = x_keywords(final_keywords)
+	original_canon = {canonical_x_keyword(keyword) for keyword in original_x_keywords}
+	original_canon.discard(None)
+	for keyword in sorted(final_x_keywords - original_canon):
+		append_keyword_write_args(cmd, keyword)
 
 	cmd.extend(
 		iptc_metadata_args(
@@ -3757,6 +3741,8 @@ def process_queue(
 
 					assign_image_keyword(image_json)
 					assign_original_filename_keyword(image_json, file)
+					# Drop any leftover X-* / dogsportphoto|* strings before write.
+					image_json["Keywords"] = canonicalize_managed_keywords(image_json["Keywords"])
 					assign_iptc_metadata(image_json, time_series, match, duel_keyword)
 					if in_place:
 						logger.info("* Updating metadata in place: %s", file)

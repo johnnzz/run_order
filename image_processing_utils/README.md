@@ -257,7 +257,7 @@ Event metadata from the `event` block becomes `dogsportphoto.com|event|`, `dogsp
 
 ### EXIF keywords written
 
-Script-written keywords use the `dogsportphoto.com|<field>|<value>` hierarchical tree. Existing non-managed keywords are preserved; managed keywords (including legacy `X-*` and `dogsportphoto|*` forms) are replaced when updated.
+Script-written keywords use the `dogsportphoto.com|<field>|<value>` hierarchical tree. Existing non-managed keywords are preserved. Missing `dogsportphoto.com|*` paths are added; legacy `X-*` / `dogsportphoto|*` forms are left untouched.
 
 When a photo match is found, the script also writes **IPTC Core** metadata via exiftool:
 
@@ -273,7 +273,7 @@ When a photo match is found, the script also writes **IPTC Core** metadata via e
 | Source | `{event} ({dogsportphoto_code})` |
 | Transmission Reference | `image_uuid` |
 
-Managed keywords are written only to `XMP-lr:HierarchicalSubject` as `dogsportphoto.com|<field>|<value>` (for example `dogsportphoto.com|team|Handler n Dog`). Reprocessing removes legacy `X-<field>|<value>` / `X-<field>: <value>` IPTC Keywords, older `dogsportphoto|<field>|<value>` paths, and any flattened `XMP-dc:Subject` nodes from prior writes. Parsers still accept those legacy forms when reading older files.
+Managed keywords are written only to `XMP-lr:HierarchicalSubject` as `dogsportphoto.com|<field>|<value>` (for example `dogsportphoto.com|team|Handler n Dog`). Writes are additive: legacy `X-*` / `dogsportphoto|*` paths are not removed. Parsers still accept those legacy forms when reading older files.
 
 **Event keywords:** `event`, `organization`, `club`, `venue`, `type`, `city`
 
@@ -303,7 +303,7 @@ Example: `dogsportphoto.com|sequence|260731-1614.30512-JN` for a 2026-07-31 16:1
 
 ### Re-processing
 
-In the event of problems processing files, files can be re-processed. All managed keywords (`dogsportphoto.com|*`, plus legacy `X-*` / `dogsportphoto|*`) will be replaced upon reprocessing. Any other keywords present in a file remain unmodified.
+In the event of problems processing files, files can be re-processed. Missing `dogsportphoto.com|*` keywords are added; existing keywords (including legacy `X-*` / `dogsportphoto|*`) are left unmodified.
 
 ### Rating (`--rating`)
 
