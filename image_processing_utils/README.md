@@ -257,7 +257,7 @@ Event metadata from the `event` block becomes `dogsportphoto.com|event|`, `dogsp
 
 ### EXIF keywords written
 
-Script-written keywords use the `dogsportphoto.com|<field>|<value>` hierarchical tree. Existing non-managed keywords are preserved. Missing `dogsportphoto.com|*` paths are added; legacy `X-*` / `dogsportphoto|*` forms are left untouched.
+Script-written keywords use the `dogsportphoto.com|<field>|<value>` hierarchical tree. Existing non-managed keywords are preserved. Missing `dogsportphoto.com|*` HierarchicalSubject paths are added (legacy `X-*` / `dogsportphoto|*` and flat Keywords copies do not count as already present); those legacy forms are left untouched.
 
 When a photo match is found, the script also writes **IPTC Core** metadata via exiftool:
 

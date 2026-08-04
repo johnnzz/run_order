@@ -90,10 +90,12 @@ from x_keywords import (
 	is_x_keyword,
 	canonical_x_keyword,
 	canonicalize_managed_keywords,
+	existing_dogsportphoto_com_keywords,
 	keyword_x_field,
 	keyword_x_value,
 	normalize_quoted_dog_name,
 	strip_match_x_keywords,
+	strip_stray_keyword_quotes,
 )
 
 logger = logging.getLogger(__name__)
@@ -341,19 +343,42 @@ def fetch_exif_tags(filename, tags, *, session=None):
 		)
 	return json.loads(cmd_out.stdout)[0]
 
+def normalize_iptc_scalar(value):
+	"""Collapse list/joined IPTC values to a single de-quoted scalar."""
+	if value is None:
+		return None
+	if isinstance(value, (list, tuple, set)):
+		items = value
+	else:
+		text = str(value).strip()
+		if not text:
+			return None
+		# ExifTool / prior writes may leave a joined multi-value Creator string.
+		if "," in text and ('"' in text or text.count(",") >= 2):
+			items = re.split(r"\s*,\s*", text)
+		else:
+			items = [text]
+	seen = set()
+	parts = []
+	for item in items:
+		if item is None:
+			continue
+		part = strip_stray_keyword_quotes(str(item).strip().strip(","))
+		if not part or part in seen:
+			continue
+		seen.add(part)
+		parts.append(part)
+	return parts[0] if parts else None
+
+
 def first_exif_value(exif_json, *tags):
 	for tag in tags:
 		value = exif_json.get(tag)
 		if value is None:
 			continue
-		if isinstance(value, (list, tuple, set)):
-			parts = [str(item).strip() for item in value if item is not None and str(item).strip()]
-			if parts:
-				return ", ".join(parts)
-			continue
-		text = str(value).strip()
-		if text:
-			return text
+		normalized = normalize_iptc_scalar(value)
+		if normalized:
+			return normalized
 	return None
 
 def camera_model_from_exif(exif_json):
@@ -512,12 +537,24 @@ def normalize_exif_json(exif_json, filename, *, session=None):
 			image_keywords = [image_keywords]
 	else:
 		image_keywords = list()
-	keyword_values = [item for item in image_keywords if item is not None]
+	keyword_values = [
+		strip_stray_keyword_quotes(item)
+		for item in image_keywords
+		if item is not None and strip_stray_keyword_quotes(item)
+	]
+	hierarchical_values = [
+		strip_stray_keyword_quotes(item)
+		for item in _normalize_exif_list(exif_json.get("HierarchicalSubject"))
+		if strip_stray_keyword_quotes(item)
+	]
 	non_x_keywords = preserve_non_x_keywords(keyword_values)
-	x_keyword_values = set()
-	x_keyword_values.update(x_keywords(_normalize_exif_list(exif_json.get("HierarchicalSubject"))))
+	hierarchical_x_keywords = x_keywords(hierarchical_values)
+	x_keyword_values = set(hierarchical_x_keywords)
 	x_keyword_values.update(x_keywords(keyword_values))
 	image_keywords = non_x_keywords | x_keyword_values
+	# Presence checks for additive HierarchicalSubject writes must use the
+	# hierarchical tag only — flat Keywords copies must not suppress adds.
+	exif_json["original_hierarchical_subjects"] = set(hierarchical_x_keywords)
 	exif_json["original_x_keywords"] = set(x_keyword_values)
 	exif_json["Keywords"] = image_keywords
 	exif_json["original_iptc_metadata"] = read_iptc_metadata(exif_json)
@@ -1121,24 +1158,29 @@ def iptc_metadata_args(original_iptc, final_iptc, *, replace_all=False, force_he
 	args = []
 	if replace_all:
 		for field, tag in IPTC_FIELD_TAGS.items():
-			old_value = original_iptc.get(field)
-			new_value = final_iptc.get(field)
+			old_value = normalize_iptc_scalar(original_iptc.get(field))
+			new_value = normalize_iptc_scalar(final_iptc.get(field))
 			if field in IPTC_FORCE_REFRESH_FIELDS:
 				if new_value:
 					args.append(format_exiftool_clear_arg(tag))
 					args.append(format_exiftool_set_arg(tag, new_value))
 				elif old_value:
-					args.append(format_exiftool_remove_arg(tag, old_value))
+					args.append(format_exiftool_clear_arg(tag))
 				continue
-			if old_value:
-				args.append(format_exiftool_remove_arg(tag, old_value))
+			if new_value and old_value == new_value:
+				continue
+			if old_value and not new_value:
+				args.append(format_exiftool_clear_arg(tag))
+				continue
 			if new_value:
+				# Clear-then-set avoids leftover multi-value Creator/list entries.
+				args.append(format_exiftool_clear_arg(tag))
 				args.append(format_exiftool_set_arg(tag, new_value))
 		return args
 
 	for field, tag in IPTC_FIELD_TAGS.items():
-		new_value = final_iptc.get(field)
-		old_value = original_iptc.get(field)
+		new_value = normalize_iptc_scalar(final_iptc.get(field))
+		old_value = normalize_iptc_scalar(original_iptc.get(field))
 		if not new_value:
 			continue
 		if field in IPTC_FORCE_REFRESH_FIELDS and force_headline_refresh:
@@ -1148,7 +1190,7 @@ def iptc_metadata_args(original_iptc, final_iptc, *, replace_all=False, force_he
 		if new_value == old_value:
 			continue
 		if old_value:
-			args.append(format_exiftool_remove_arg(tag, old_value))
+			args.append(format_exiftool_clear_arg(tag))
 		args.append(format_exiftool_set_arg(tag, new_value))
 	return args
 
@@ -1305,15 +1347,20 @@ def put_exif(exif_json, filename, output_path=None, *, session=None):
 
 	cmd = ["-m", "-overwrite_original"]
 
-	original_x_keywords = x_keywords(exif_json.get("original_x_keywords", set()))
 	# Only dogsportphoto.com|* managed paths are written; never X-* or dogsportphoto|*.
-	# Legacy forms are left in place; we only add missing dogsportphoto.com paths.
+	# Count a path as present only when dogsportphoto.com|* already exists on
+	# HierarchicalSubject — legacy X-* / dogsportphoto|* and flat Keywords copies
+	# must not suppress the .com write.
 	final_keywords = canonicalize_managed_keywords(exif_json.get("Keywords", set()))
 	exif_json["Keywords"] = final_keywords
 	final_x_keywords = x_keywords(final_keywords)
-	original_canon = {canonical_x_keyword(keyword) for keyword in original_x_keywords}
-	original_canon.discard(None)
-	for keyword in sorted(final_x_keywords - original_canon):
+	already_present = existing_dogsportphoto_com_keywords(
+		exif_json.get(
+			"original_hierarchical_subjects",
+			exif_json.get("original_x_keywords", set()),
+		)
+	)
+	for keyword in sorted(final_x_keywords - already_present):
 		append_keyword_write_args(cmd, keyword)
 
 	cmd.extend(
