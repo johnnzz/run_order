@@ -153,7 +153,7 @@ google_qr_to_timeseries.py --timezone America/Los_Angeles \
 
 Match queued event photos to run-order check-ins and write EXIF keywords.
 
-First step after timeseries export: reads photos from a queue directory, matches each image to photographer location, team check-in, and discipline using a local timeseries JSON file, writes `X-*` keywords (and optional rating) via exiftool, then renames and moves tagged files into `processed/`.
+First step after timeseries export: reads photos from a queue directory, matches each image to photographer location, team check-in, and discipline using a local timeseries JSON file, writes `dogsportphoto.com|*` hierarchical keywords (and optional rating) via exiftool, then renames and moves tagged files into `processed/`.
 
 ```text
 process_queue.py [options]
@@ -238,7 +238,7 @@ Entry types indexed:
 | `team_check_in` | Handler, dog, team, org IDs, photo request, message |
 | `set_discipline` | Active discipline at a location |
 
-Event metadata from the `event` block becomes `X-event:`, `X-org:`, `X-club:`, `X-venue:`, `X-type:`, and `X-city:` keywords on every processed image.
+Event metadata from the `event` block becomes `dogsportphoto.com|event|`, `dogsportphoto.com|organization|`, `dogsportphoto.com|club|`, `dogsportphoto.com|venue|`, `dogsportphoto.com|type|`, and `dogsportphoto.com|city|` keywords on every processed image.
 
 **Optional merge (`--timeline2`)** — Merges a secondary file into the primary (primary wins on conflicts; secondary fills gaps).
 
@@ -257,39 +257,39 @@ Event metadata from the `event` block becomes `X-event:`, `X-org:`, `X-club:`, `
 
 ### EXIF keywords written
 
-Script-written keywords use the `X-<field>:` prefix. Existing non-`X-` keywords are preserved; `X-` keywords are replaced when updated.
+Script-written keywords use the `dogsportphoto.com|<field>|<value>` hierarchical tree. Existing non-managed keywords are preserved; managed keywords (including legacy `X-*` and `dogsportphoto|*` forms) are replaced when updated.
 
 When a photo match is found, the script also writes **IPTC Core** metadata via exiftool:
 
 | IPTC field | Source |
 |------------|--------|
-| Title | `{team} - {X-img}` (Lightroom Title / `dc:title`) |
-| Headline | `{team} compete in {org} {event}`; duel → `{X-duel} in {discipline} at {event}` |
+| Title | `{team} - {image_uuid}` (Lightroom Title / `dc:title`) |
+| Headline | `{team} compete in {org} {event}`; duel → `{duel} in {discipline} at {event}` |
 | Caption | Same text as Headline (Lightroom Caption / `dc:description`) |
 | Location | `event.venue` when present |
 | City / State | from event metadata |
 | Creator / Credit | photographer name |
 | Copyright | existing image copyright, or `© {year} {photographer}` |
 | Source | `{event} ({dogsportphoto_code})` |
-| Transmission Reference | `X-img` UUID |
+| Transmission Reference | `image_uuid` |
 
-`X-*` keywords are written only to `XMP-lr:HierarchicalSubject` using `X-<field>|<value>` paths (for example `X-team|Handler n Dog`). The same data is also written as a parallel multi-level tree `dogsportphoto|<field>|<value>` (for example `dogsportphoto|team|Handler n Dog`), where `<field>` is the keyword name without the `X-` prefix. Reprocessing removes legacy flat `X-<field>: <value>` IPTC Keywords and any old flattened `XMP-dc:Subject` nodes from prior writes. Parsers accept both colon and pipe forms when reading older files; staging and matching still key off the `X-*` paths.
+Managed keywords are written only to `XMP-lr:HierarchicalSubject` as `dogsportphoto.com|<field>|<value>` (for example `dogsportphoto.com|team|Handler n Dog`). Reprocessing removes legacy `X-<field>|<value>` / `X-<field>: <value>` IPTC Keywords, older `dogsportphoto|<field>|<value>` paths, and any flattened `XMP-dc:Subject` nodes from prior writes. Parsers still accept those legacy forms when reading older files.
 
-**Event keywords:** `X-event|`, `X-org|`, `X-club|`, `X-venue|`, `X-type|`, `X-city|`
+**Event keywords:** `event`, `organization`, `club`, `venue`, `type`, `city`
 
-**Match keywords:** `X-photog|`, `X-dog|`, `X-handler|`, `X-team|`, `X-photoreq|`, `X-msg|`, `X-dis|`, `X-loc|`, `X-id-<org>|`
+**Match keywords:** `photographer`, `dog`, `handler`, `team`, `photoreq`, `msg`, `discipline`, `location`, `id-<org>`
 
-**Per-image keywords:** `X-img|` (unique ID), `X-ofn|` (original filename), `X-seq|` (sequence group)
+**Per-image keywords:** `image_uuid` (unique ID), `original_filename`, `sequence` (sequence group)
 
-**Dueling Dogs:** `X-duel|` plus per-lane dog/handler/team keywords when both dock lanes have dogs checked in.
+**Dueling Dogs:** `duel` plus per-lane dog/handler/team keywords when both dock lanes have dogs checked in.
 
-### Sequence grouping (`X-seq|`)
+### Sequence grouping (`sequence`)
 
-Queue images sorted by capture time; consecutive images sharing the same location, discipline, and dog (or duel dock + dogs) receive the same `X-seq|` value derived from the matched check-in:
+Queue images sorted by capture time; consecutive images sharing the same location, discipline, and dog (or duel dock + dogs) receive the same `sequence` value derived from the matched check-in:
 
 `<yy><mm><dd>-<hh><mm>.<ss><ms>-<photographer initials>`
 
-Example: `X-seq|260731-1614.30512-JN` for a 2026-07-31 16:14:30.512 check-in by John Navitsky.
+Example: `dogsportphoto.com|sequence|260731-1614.30512-JN` for a 2026-07-31 16:14:30.512 check-in by John Navitsky.
 
 ### Safety and idempotency
 
@@ -299,11 +299,11 @@ Example: `X-seq|260731-1614.30512-JN` for a 2026-07-31 16:14:30.512 check-in by 
 | **`--force`** | Overwrite even when MD5 matches |
 | **`--safe`** | Allocate `_N` suffix filenames |
 | **MD5 skip** | Without `--force`, identical destination content is not re-written |
-| **Keyword diff** | exiftool updates `X-` keywords only when changed |
+| **Keyword diff** | exiftool updates managed keywords only when changed |
 
 ### Re-processing
 
-In the event of problems processing files, files can be re-processed. All `X-` keywords will be replaced upon reprocessing. Any keywords present in a file that do not contain the `X-` prefix will remain unmodified.
+In the event of problems processing files, files can be re-processed. All managed keywords (`dogsportphoto.com|*`, plus legacy `X-*` / `dogsportphoto|*`) will be replaced upon reprocessing. Any other keywords present in a file remain unmodified.
 
 ### Rating (`--rating`)
 
@@ -348,7 +348,7 @@ Use `summarize_dir.py` to inspect EXIF on processed output.
 
 Stage tagged photos into team folders for publish and gallery delivery.
 
-Second step after `process_queue.py`: copies files from `processed/` into `publish/` subdirectories named by `X-team` (or `X-handler`) keywords, and writes `clients.csv` with handler emails looked up from the timeseries file.
+Second step after `process_queue.py`: copies files from `processed/` into `publish/` subdirectories named by `team` (or `handler`) keywords, and writes `clients.csv` with handler emails looked up from the timeseries file.
 
 ```text
 stage_into_dirs.py [options]
@@ -373,13 +373,13 @@ With no options, prints usage (same as `-h` / `--help`).
 
 1. Read `Keywords` from each file in `--processed` via exiftool.
 2. Determine target folder name(s):
-   - Prefer all distinct `X-team:` values (a file with multiple teams is copied into each folder).
-   - If no team but `X-dog:` is present, skip (dog-only images are not staged).
-   - Otherwise use `X-handler:` values.
+   - Prefer all distinct `team` values (a file with multiple teams is copied into each folder).
+   - If no team but `dog` is present, skip (dog-only images are not staged).
+   - Otherwise use `handler` values.
 3. Copy files into `publish/<team-or-handler>/` (slashes in names become hyphens).
-   - With `--level 2`, copy into `publish/<photographer>/<team-or-handler>/` instead. Photographer comes from `X-photog:` keywords, then IPTC `Creator`; missing values use `Unknown`.
+   - With `--level 2`, copy into `publish/<photographer>/<team-or-handler>/` instead. Photographer comes from `photographer` keywords, then IPTC `Creator`; missing values use `Unknown`.
 4. Build `clients.csv` with columns `handler_name`, `handler_email`, `team_name`, `download`.
-   - Handler emails come from `team_check_in` entries in the timeseries, with optional `X-email:` keyword fallback.
+   - Handler emails come from `team_check_in` entries in the timeseries, with optional `email` keyword fallback.
    - Download URLs are built from `--download-prefix` and a slug derived from the team name.
 5. Merge with any existing `clients.csv` in the publish directory.
 6. Clear the processed directory after successful staging.

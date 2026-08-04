@@ -18,10 +18,9 @@ When --process completes, a photo summary JSON file named <event>-ps.json is wri
 next to the timeseries file. Each entry records the image name, capture timestamp,
 and matched handler and dog.
 
-Each processed file will have hierarchical EXIF keywords prefixed with X-, such as
-X-team|Handler n Dog, grouped under parent nodes like X-team in Lightroom, plus a
-parallel multi-level tree dogsportphoto|<field>|<value> (for example
-dogsportphoto|team|Handler n Dog).
+Each processed file will have hierarchical EXIF keywords under dogsportphoto.com,
+such as dogsportphoto.com|team|Handler n Dog, grouped under parent nodes in
+Lightroom. Legacy X-* and dogsportphoto|* keywords are removed on reprocess.
 Results can be reviewed with the summarize_dir.py script.
 
 Portable and self-contained: only requires docopt (stdlib otherwise).
@@ -87,7 +86,6 @@ from stage_into_dirs import (
 )
 from x_keywords import (
 	format_keyword,
-	dogsportphoto_hierarchical_path,
 	hierarchical_subject_entries,
 	is_match_x_keyword,
 	is_x_keyword,
@@ -922,40 +920,32 @@ def build_sequence_ids(queue_entries, time_series):
 	return sequence_ids
 
 def format_keyword_remove_arg(keyword):
-	escaped = str(keyword).replace("\\", "\\\\").replace('"', '\\"')
-	return '-Keywords-="{}"'.format(escaped)
+	# Pass as a single argv element; do not wrap in quotes (subprocess is not a shell).
+	return "-Keywords-={}".format(keyword)
 
 def format_hierarchical_subject_add_arg(keyword):
-	escaped = str(keyword).replace("\\", "\\\\").replace('"', '\\"')
-	return '-XMP-lr:HierarchicalSubject+="{}"'.format(escaped)
+	return "-XMP-lr:HierarchicalSubject+={}".format(keyword)
 
 def format_hierarchical_subject_remove_arg(keyword):
-	escaped = str(keyword).replace("\\", "\\\\").replace('"', '\\"')
-	return '-XMP-lr:HierarchicalSubject-="{}"'.format(escaped)
+	return "-XMP-lr:HierarchicalSubject-={}".format(keyword)
 
 def format_subject_remove_arg(value):
-	escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
-	return '-XMP-dc:Subject-="{}"'.format(escaped)
+	return "-XMP-dc:Subject-={}".format(value)
 
 def append_keyword_write_args(cmd, keyword, *, remove=False):
 	canonical, subject_nodes = hierarchical_subject_entries(keyword)
-	dsp_path = dogsportphoto_hierarchical_path(keyword)
 	if remove:
 		for form in sorted(keyword_removal_forms(keyword)):
 			cmd.append(format_keyword_remove_arg(form))
-		if canonical:
-			cmd.append(format_hierarchical_subject_remove_arg(canonical))
-		if dsp_path:
-			cmd.append(format_hierarchical_subject_remove_arg(dsp_path))
-		if canonical or dsp_path:
-			for subject in sorted(subject_nodes):
-				cmd.append(format_subject_remove_arg(subject))
+		# subject_nodes includes every HierarchicalSubject path variant to scrub
+		for subject in sorted(subject_nodes):
+			if "|" in subject:
+				cmd.append(format_hierarchical_subject_remove_arg(subject))
+			cmd.append(format_subject_remove_arg(subject))
 		return
 	if canonical is None:
 		return
 	cmd.append(format_hierarchical_subject_add_arg(canonical))
-	if dsp_path:
-		cmd.append(format_hierarchical_subject_add_arg(dsp_path))
 
 IPTC_SCALAR_FIELDS = (
 	"title",
@@ -1133,12 +1123,11 @@ def build_iptc_metadata(time_series, match, image_json, duel_keyword):
 	return metadata or None
 
 def format_exiftool_set_arg(tag, value):
-	escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
-	return '-{}="{}"'.format(tag, escaped)
+	# Pass as a single argv element; do not wrap in quotes (subprocess is not a shell).
+	return "-{}={}".format(tag, value)
 
 def format_exiftool_remove_arg(tag, value):
-	escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
-	return '-{}-="{}"'.format(tag, escaped)
+	return "-{}-={}".format(tag, value)
 
 def format_exiftool_clear_arg(tag):
 	return "-{}=".format(tag)
