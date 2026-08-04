@@ -3599,10 +3599,14 @@ def process_queue(
 					verbosity=verbosity,
 				)
 
+				# --in-place defaults to quiet console output, but still needs the same
+				# per-image diagnostic lines in the log as --verbosity full.
+				detail_logs = verbosity == VERBOSITY_FULL or in_place
+
 				for index, (queue_file, image_json) in enumerate(queue_entries, start=1):
 					file = os.path.basename(queue_file)
 					queue_relative = os.path.relpath(queue_file, queue_dir)
-					if verbosity == VERBOSITY_FULL:
+					if detail_logs:
 						log_batch_progress("Processing images", index, len(queue_entries))
 						logger.info("Processing image %d/%d: %s", index, len(queue_entries), file)
 						if queue_relative != file:
@@ -3655,7 +3659,7 @@ def process_queue(
 								disposition="before_first_check_in",
 							)
 						)
-						if verbosity == VERBOSITY_FULL:
+						if detail_logs:
 							logger.info("")
 						abort_if_interrupt_requested(completed_item=file)
 						continue
@@ -3819,7 +3823,7 @@ def process_queue(
 							disposition="tagged",
 						)
 					)
-					if verbosity == VERBOSITY_FULL:
+					if detail_logs:
 						logger.info("")
 					abort_if_interrupt_requested(completed_item=file)
 	finally:
@@ -3859,7 +3863,10 @@ def main():
 		timeline_path = args["--timeline"] or DEFAULT_TIMELINE_FILE
 		merge_path = args["--timeline2"] or None
 		in_place = bool(args["--in-place"])
-		if verbosity == VERBOSITY_FULL:
+		# In-place keeps quiet console output by default, but still logs the same
+		# startup / per-image detail lines used by --verbosity full.
+		detail_logs = verbosity == VERBOSITY_FULL or in_place
+		if detail_logs:
 			logger.info("Queue directory: %s", queue_dir)
 			if in_place:
 				logger.info("In-place mode: metadata only (no rename/move/backup)")
@@ -3870,7 +3877,7 @@ def main():
 			logger.info("Loading time series from %s", timeline_path)
 			if merge_path:
 				logger.info("Merging secondary time series from %s", merge_path)
-		else:
+		if verbosity == VERBOSITY_QUIET:
 			print_quiet_status("Loading time series from {}".format(timeline_path), verbosity=verbosity)
 			if merge_path:
 				print_quiet_status(
@@ -3881,7 +3888,7 @@ def main():
 				print_quiet_status("In-place mode: metadata only", verbosity=verbosity)
 		time_series = load_time_series(timeline_path, merge_path=merge_path)
 		output_mode = parse_output_mode(args["--output"])
-		if verbosity == VERBOSITY_FULL:
+		if detail_logs:
 			if not in_place:
 				logger.info("Output layout: %s", output_mode)
 			logger.info("Starting queue processing...")
@@ -3898,7 +3905,7 @@ def main():
 			output_mode=output_mode,
 			verbosity=verbosity,
 		)
-		if verbosity == VERBOSITY_FULL:
+		if detail_logs:
 			logger.info("Queue processing complete")
 		return
 
