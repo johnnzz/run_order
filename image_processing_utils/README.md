@@ -193,7 +193,7 @@ process_queue.py [options]
 6. Optionally back up the original (only when `-b` is set; skipped with `--in-place`)
 7. Rename and move the file into processed (skipped with `--in-place`)
 
-**`--process --in-place`** — Same matching and EXIF/IPTC writes, but the queue file keeps its path and name. Pass-through and before-first-check-in files are also left in the queue unchanged.
+**`--process --in-place`** — Same matching and EXIF/IPTC writes, but the queue file keeps its path and name. Pass-through and before-first-check-in files are also left in the queue unchanged. Console output still defaults to `--verbosity quiet`, but the log (`--log` or `--verbosity full`) includes the same per-image match details as a normal full-verbosity run.
 
 ### Destination file behavior (`--force` / `--safe`)
 
