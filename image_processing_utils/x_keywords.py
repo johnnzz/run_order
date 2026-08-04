@@ -138,13 +138,32 @@ def canonicalize_managed_keywords(keywords):
 	for keyword in keywords or []:
 		if not keyword:
 			continue
-		if is_x_keyword(keyword):
-			canon = canonical_x_keyword(keyword)
+		text = strip_stray_keyword_quotes(keyword)
+		if not text:
+			continue
+		if is_x_keyword(text):
+			canon = canonical_x_keyword(text)
 			if canon:
 				normalized.add(canon)
 			continue
-		normalized.add(keyword)
+		normalized.add(text)
 	return normalized
+
+
+def existing_dogsportphoto_com_keywords(keywords):
+	"""Exact dogsportphoto.com|* paths already on the file (legacy X-* / dogsportphoto|* ignored)."""
+	present = set()
+	prefix = DOGSPORTPHOTO_KEYWORD_ROOT + "|"
+	for keyword in keywords or []:
+		if not keyword:
+			continue
+		text = strip_stray_keyword_quotes(keyword)
+		if not text.startswith(prefix):
+			continue
+		canon = canonical_x_keyword(text)
+		if canon:
+			present.add(canon)
+	return present
 
 
 def is_match_x_keyword(keyword):
