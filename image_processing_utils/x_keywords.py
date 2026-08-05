@@ -3,8 +3,11 @@ from __future__ import annotations
 import re
 
 _QUOTED_DOG_NAME_SEGMENT_RE = re.compile(r'\s*"([^"]*)"\s*')
-X_KEYWORD_LEGACY_RE = re.compile(r"^X-([^:]+):\s*(.+)$", re.IGNORECASE)
-X_KEYWORD_HIER_RE = re.compile(r"^X-([^|]+)\|(.+)$", re.IGNORECASE)
+# Flat managed keywords use DSP-*; legacy X-* forms are still accepted when reading.
+FLAT_KEYWORD_PREFIX = "DSP-"
+LEGACY_FLAT_KEYWORD_PREFIX = "X-"
+FLAT_KEYWORD_LEGACY_RE = re.compile(r"^(?:DSP|X)-([^:]+):\s*(.+)$", re.IGNORECASE)
+FLAT_KEYWORD_HIER_RE = re.compile(r"^(?:DSP|X)-([^|]+)\|(.+)$", re.IGNORECASE)
 DOGSPORTPHOTO_HIER_RE = re.compile(
 	r"^(dogsportphoto(?:\.com)?)\|([^|]+)\|(.+)$",
 	re.IGNORECASE,
@@ -82,12 +85,12 @@ def parse_x_keyword(keyword):
 		field = _canonicalize_field_name(match.group(2))
 		value = strip_stray_keyword_quotes(match.group(3))
 		return field, value
-	match = X_KEYWORD_HIER_RE.match(text)
+	match = FLAT_KEYWORD_HIER_RE.match(text)
 	if match:
 		field = _canonicalize_field_name(match.group(1))
 		value = strip_stray_keyword_quotes(match.group(2))
 		return field, value
-	match = X_KEYWORD_LEGACY_RE.match(text)
+	match = FLAT_KEYWORD_LEGACY_RE.match(text)
 	if match:
 		field = _canonicalize_field_name(match.group(1))
 		value = strip_stray_keyword_quotes(match.group(2))
@@ -95,7 +98,7 @@ def parse_x_keyword(keyword):
 	return None, None
 
 
-def format_keyword(field, value):
+def _normalized_keyword_value(field, value):
 	if value is None:
 		return None
 	text = str(value).strip()
@@ -108,7 +111,31 @@ def format_keyword(field, value):
 	elif field == "team" and " n " in text:
 		handler_part, dog_part = text.split(" n ", 1)
 		text = "{} n {}".format(handler_part.strip(), normalize_quoted_dog_name(dog_part.strip()))
+	return text
+
+
+def format_keyword(field, value):
+	"""Return dogsportphoto.com|<write_field>|<value> hierarchical path."""
+	text = _normalized_keyword_value(field, value)
+	if text is None:
+		return None
 	return "{}|{}|{}".format(DOGSPORTPHOTO_KEYWORD_ROOT, _write_field_name(field), text)
+
+
+def format_x_flat_keyword(field, value):
+	"""Return DSP-<short_field>|<value> flat hierarchical path."""
+	text = _normalized_keyword_value(field, value)
+	if text is None:
+		return None
+	return "{}{}|{}".format(FLAT_KEYWORD_PREFIX, _canonicalize_field_name(field), text)
+
+
+def x_flat_keyword_from_managed(keyword):
+	"""Convert a managed keyword (any accepted form) to DSP-<field>|<value>."""
+	field, value = parse_x_keyword(keyword)
+	if field is None or not value:
+		return None
+	return format_x_flat_keyword(field, value)
 
 
 def keyword_x_field(keyword):
@@ -151,7 +178,7 @@ def canonicalize_managed_keywords(keywords):
 
 
 def existing_dogsportphoto_com_keywords(keywords):
-	"""Exact dogsportphoto.com|* paths already on the file (legacy X-* / dogsportphoto|* ignored)."""
+	"""Exact dogsportphoto.com|* paths already on the file (flat/legacy forms ignored)."""
 	present = set()
 	prefix = DOGSPORTPHOTO_KEYWORD_ROOT + "|"
 	for keyword in keywords or []:
@@ -163,6 +190,22 @@ def existing_dogsportphoto_com_keywords(keywords):
 		canon = canonical_x_keyword(text)
 		if canon:
 			present.add(canon)
+	return present
+
+
+def existing_x_flat_keywords(keywords):
+	"""Exact DSP-<field>|<value> paths already on the file (legacy X-* ignored)."""
+	present = set()
+	prefix = FLAT_KEYWORD_PREFIX.lower()
+	for keyword in keywords or []:
+		if not keyword:
+			continue
+		text = strip_stray_keyword_quotes(keyword)
+		if not text.lower().startswith(prefix):
+			continue
+		flat = x_flat_keyword_from_managed(text)
+		if flat:
+			present.add(flat)
 	return present
 
 
