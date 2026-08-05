@@ -153,7 +153,7 @@ google_qr_to_timeseries.py --timezone America/Los_Angeles \
 
 Match queued event photos to run-order check-ins and write EXIF keywords.
 
-First step after timeseries export: reads photos from a queue directory, matches each image to photographer location, team check-in, and discipline using a local timeseries JSON file, writes `dogsportphoto.com|*` hierarchical keywords (and optional rating) via exiftool, then renames and moves tagged files into `processed/`.
+First step after timeseries export: reads photos from a queue directory, matches each image to photographer location, team check-in, and discipline using a local timeseries JSON file, writes keywords via exiftool according to `--keyword` (and optional rating), then renames and moves tagged files into `processed/`.
 
 ```text
 process_queue.py [options]
@@ -173,6 +173,7 @@ process_queue.py [options]
 | `--log FILE` | `process_queue-<pid>.log` | Log file path |
 | `--force` | | Always overwrite existing destination files, even when MD5 matches |
 | `--safe` | | Write to `_N` suffix paths instead of overwriting |
+| `--keyword MODE` | `hierarchical` | Keyword writes: `flat` / `f` (`X-field\|value`), `hierarchical` / `h` (`dogsportphoto.com\|field\|value`), or `both` / `b` |
 | `-h`, `--help` | | Show usage |
 
 `--force` and `--safe` cannot be used together. `--in-place` cannot be combined with `--force` or `--safe`.
@@ -257,7 +258,15 @@ Event metadata from the `event` block becomes `dogsportphoto.com|event|`, `dogsp
 
 ### EXIF keywords written
 
-Script-written keywords use the `dogsportphoto.com|<field>|<value>` hierarchical tree. Existing non-managed keywords are preserved. Missing `dogsportphoto.com|*` HierarchicalSubject paths are added (legacy `X-*` / `dogsportphoto|*` and flat Keywords copies do not count as already present); those legacy forms are left untouched.
+Keyword form is selected with `--keyword` (default `hierarchical`):
+
+| Mode | Abbreviation | Writes |
+|------|--------------|--------|
+| `flat` | `f` | `X-<field>\|<value>` (short field names such as `dis`, `img`, `photog`) |
+| `hierarchical` | `h` | `dogsportphoto.com\|<field>\|<value>` (long field names such as `discipline`, `image_uuid`, `photographer`) |
+| `both` | `b` | Both forms |
+
+Existing non-managed keywords are preserved. Missing paths for the selected form(s) are added to `XMP-lr:HierarchicalSubject` only; other forms already on the file are left untouched. Presence is checked per form on HierarchicalSubject (flat Keywords copies do not suppress adds).
 
 When a photo match is found, the script also writes **IPTC Core** metadata via exiftool:
 
@@ -273,7 +282,7 @@ When a photo match is found, the script also writes **IPTC Core** metadata via e
 | Source | `{event} ({dogsportphoto_code})` |
 | Transmission Reference | `image_uuid` |
 
-Managed keywords are written only to `XMP-lr:HierarchicalSubject` as `dogsportphoto.com|<field>|<value>` (for example `dogsportphoto.com|team|Handler n Dog`). Writes are additive: legacy `X-*` / `dogsportphoto|*` paths are not removed. Parsers still accept those legacy forms when reading older files.
+Managed keywords are written only to `XMP-lr:HierarchicalSubject`. Writes are additive for the selected `--keyword` mode(s). Parsers still accept `X-*`, `dogsportphoto|*`, and `dogsportphoto.com|*` forms when reading older files.
 
 **Event keywords:** `event`, `organization`, `club`, `venue`, `type`, `city`
 

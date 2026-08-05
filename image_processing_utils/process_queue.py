@@ -18,10 +18,9 @@ When --process completes, a photo summary JSON file named <event>-ps.json is wri
 next to the timeseries file. Each entry records the image name, capture timestamp,
 and matched handler and dog.
 
-Each processed file will have hierarchical EXIF keywords under dogsportphoto.com,
-such as dogsportphoto.com|team|Handler n Dog, grouped under parent nodes in
-Lightroom. Writes are additive; legacy X-* / dogsportphoto|* keywords are left in place.
-Results can be reviewed with the summarize_dir.py script.
+Keyword writes are controlled by ``--keyword``:
+flat (X-field|value), hierarchical (dogsportphoto.com|field|value), or both.
+Writes are additive. Results can be reviewed with the summarize_dir.py script.
 
 Portable and self-contained: only requires docopt (stdlib otherwise).
 Also requires exiftool on PATH for --process.
@@ -46,6 +45,8 @@ Options:
   --force                 Always overwrite existing destination files.
   --safe                  Write to _N suffix paths instead of overwriting.
   --output MODE           Output layout: flat or subdir [default: flat].
+  --keyword MODE          Keyword writes: flat, hierarchical, or both
+                          (f/h/b) [default: hierarchical].
   --verbosity LEVEL       Console output: quiet or full [default: quiet].
   -h, --help              Show this message.
 """
@@ -91,11 +92,13 @@ from x_keywords import (
 	canonical_x_keyword,
 	canonicalize_managed_keywords,
 	existing_dogsportphoto_com_keywords,
+	existing_x_flat_keywords,
 	keyword_x_field,
 	keyword_x_value,
 	normalize_quoted_dog_name,
 	strip_match_x_keywords,
 	strip_stray_keyword_quotes,
+	x_flat_keyword_from_managed,
 )
 
 logger = logging.getLogger(__name__)
@@ -980,15 +983,52 @@ def build_sequence_ids(queue_entries, time_series):
 
 	return sequence_ids
 
+KEYWORD_MODE_FLAT = "flat"
+KEYWORD_MODE_HIERARCHICAL = "hierarchical"
+KEYWORD_MODE_BOTH = "both"
+KEYWORD_MODES = (KEYWORD_MODE_FLAT, KEYWORD_MODE_HIERARCHICAL, KEYWORD_MODE_BOTH)
+
+def parse_keyword_mode(value):
+	if value is None:
+		return KEYWORD_MODE_HIERARCHICAL
+	text = str(value).strip().lower()
+	aliases = {
+		"f": KEYWORD_MODE_FLAT,
+		"flat": KEYWORD_MODE_FLAT,
+		"h": KEYWORD_MODE_HIERARCHICAL,
+		"hierarchical": KEYWORD_MODE_HIERARCHICAL,
+		"b": KEYWORD_MODE_BOTH,
+		"both": KEYWORD_MODE_BOTH,
+	}
+	mode = aliases.get(text)
+	if mode is None:
+		raise SystemExit(
+			"Invalid --keyword value: {} (expected flat, hierarchical, both, or f/h/b)".format(
+				value
+			)
+		)
+	return mode
+
+def writes_flat_keywords(keyword_mode):
+	return keyword_mode in {KEYWORD_MODE_FLAT, KEYWORD_MODE_BOTH}
+
+def writes_hierarchical_keywords(keyword_mode):
+	return keyword_mode in {KEYWORD_MODE_HIERARCHICAL, KEYWORD_MODE_BOTH}
+
 def format_hierarchical_subject_add_arg(keyword):
 	# Pass as a single argv element; do not wrap in quotes (subprocess is not a shell).
 	return "-XMP-lr:HierarchicalSubject+={}".format(keyword)
 
-def append_keyword_write_args(cmd, keyword):
+def append_keyword_write_args(cmd, keyword, *, keyword_mode=KEYWORD_MODE_HIERARCHICAL):
 	canonical = canonical_x_keyword(keyword)
 	if canonical is None:
 		return
-	cmd.append(format_hierarchical_subject_add_arg(canonical))
+	if writes_hierarchical_keywords(keyword_mode):
+		cmd.append(format_hierarchical_subject_add_arg(canonical))
+	if writes_flat_keywords(keyword_mode):
+		flat = x_flat_keyword_from_managed(canonical)
+		if flat:
+			cmd.append(format_hierarchical_subject_add_arg(flat))
 
 IPTC_SCALAR_FIELDS = (
 	"title",
@@ -1369,7 +1409,14 @@ def copy_duel_photo_to_additional_staging_subdirs(
 			copy_destination(source_path, backup_path, force=force, safe=safe)
 
 
-def put_exif(exif_json, filename, output_path=None, *, session=None):
+def put_exif(
+	exif_json,
+	filename,
+	output_path=None,
+	*,
+	session=None,
+	keyword_mode=KEYWORD_MODE_HIERARCHICAL,
+):
 
 	# if log is empty, we didn't do anything
 	if not exif_json["log"]:
@@ -1378,21 +1425,26 @@ def put_exif(exif_json, filename, output_path=None, *, session=None):
 
 	cmd = ["-m", "-overwrite_original"]
 
-	# Only dogsportphoto.com|* managed paths are written; never X-* or dogsportphoto|*.
-	# Count a path as present only when dogsportphoto.com|* already exists on
-	# HierarchicalSubject — legacy X-* / dogsportphoto|* and flat Keywords copies
-	# must not suppress the .com write.
+	# Managed keywords are written additively to HierarchicalSubject.
+	# --keyword flat → X-field|value; hierarchical → dogsportphoto.com|field|value;
+	# both → each form. Presence is checked per form on HierarchicalSubject only.
 	final_keywords = canonicalize_managed_keywords(exif_json.get("Keywords", set()))
 	exif_json["Keywords"] = final_keywords
 	final_x_keywords = x_keywords(final_keywords)
-	already_present = existing_dogsportphoto_com_keywords(
-		exif_json.get(
-			"original_hierarchical_subjects",
-			exif_json.get("original_x_keywords", set()),
-		)
+	hierarchical_originals = exif_json.get(
+		"original_hierarchical_subjects",
+		exif_json.get("original_x_keywords", set()),
 	)
-	for keyword in sorted(final_x_keywords - already_present):
-		append_keyword_write_args(cmd, keyword)
+	if writes_hierarchical_keywords(keyword_mode):
+		already_hierarchical = existing_dogsportphoto_com_keywords(hierarchical_originals)
+		for keyword in sorted(final_x_keywords - already_hierarchical):
+			cmd.append(format_hierarchical_subject_add_arg(keyword))
+	if writes_flat_keywords(keyword_mode):
+		already_flat = existing_x_flat_keywords(hierarchical_originals)
+		for keyword in sorted(final_x_keywords):
+			flat = x_flat_keyword_from_managed(keyword)
+			if flat and flat not in already_flat:
+				cmd.append(format_hierarchical_subject_add_arg(flat))
 
 	cmd.extend(
 		iptc_metadata_args(
@@ -3501,6 +3553,7 @@ def process_queue(
 	in_place=False,
 	timeline_path=None,
 	output_mode=OUTPUT_MODE_FLAT,
+	keyword_mode=KEYWORD_MODE_HIERARCHICAL,
 	verbosity=VERBOSITY_QUIET,
 ):
 	install_graceful_interrupt_handler()
@@ -3824,7 +3877,13 @@ def process_queue(
 					assign_iptc_metadata(image_json, time_series, match, duel_keyword)
 					if in_place:
 						logger.info("* Updating metadata in place: %s", file)
-						put_exif(image_json, queue_file, queue_file, session=exif_session)
+						put_exif(
+							image_json,
+							queue_file,
+							queue_file,
+							session=exif_session,
+							keyword_mode=keyword_mode,
+						)
 						processed_file = queue_file
 						summary_root = queue_dir
 					else:
@@ -3839,7 +3898,13 @@ def process_queue(
 							match=match,
 						)
 						logger.info("* Renaming %s", output_name)
-						put_exif(image_json, queue_file, processed_file, session=exif_session)
+						put_exif(
+							image_json,
+							queue_file,
+							processed_file,
+							session=exif_session,
+							keyword_mode=keyword_mode,
+						)
 						if backup_dir and backup_file:
 							backup_file, backed_up = copy_destination(
 								queue_file,
@@ -3952,9 +4017,11 @@ def main():
 				print_quiet_status("In-place mode: metadata only", verbosity=verbosity)
 		time_series = load_time_series(timeline_path, merge_path=merge_path)
 		output_mode = parse_output_mode(args["--output"])
+		keyword_mode = parse_keyword_mode(args["--keyword"])
 		if detail_logs:
 			if not in_place:
 				logger.info("Output layout: %s", output_mode)
+			logger.info("Keyword mode: %s", keyword_mode)
 			logger.info("Starting queue processing...")
 		process_queue(
 			queue_dir=queue_dir,
@@ -3967,6 +4034,7 @@ def main():
 			in_place=in_place,
 			timeline_path=timeline_path,
 			output_mode=output_mode,
+			keyword_mode=keyword_mode,
 			verbosity=verbosity,
 		)
 		if detail_logs:

@@ -95,7 +95,7 @@ def parse_x_keyword(keyword):
 	return None, None
 
 
-def format_keyword(field, value):
+def _normalized_keyword_value(field, value):
 	if value is None:
 		return None
 	text = str(value).strip()
@@ -108,7 +108,31 @@ def format_keyword(field, value):
 	elif field == "team" and " n " in text:
 		handler_part, dog_part = text.split(" n ", 1)
 		text = "{} n {}".format(handler_part.strip(), normalize_quoted_dog_name(dog_part.strip()))
+	return text
+
+
+def format_keyword(field, value):
+	"""Return dogsportphoto.com|<write_field>|<value> hierarchical path."""
+	text = _normalized_keyword_value(field, value)
+	if text is None:
+		return None
 	return "{}|{}|{}".format(DOGSPORTPHOTO_KEYWORD_ROOT, _write_field_name(field), text)
+
+
+def format_x_flat_keyword(field, value):
+	"""Return X-<short_field>|<value> flat hierarchical path."""
+	text = _normalized_keyword_value(field, value)
+	if text is None:
+		return None
+	return "X-{}|{}".format(_canonicalize_field_name(field), text)
+
+
+def x_flat_keyword_from_managed(keyword):
+	"""Convert a managed keyword (any accepted form) to X-<field>|<value>."""
+	field, value = parse_x_keyword(keyword)
+	if field is None or not value:
+		return None
+	return format_x_flat_keyword(field, value)
 
 
 def keyword_x_field(keyword):
@@ -163,6 +187,21 @@ def existing_dogsportphoto_com_keywords(keywords):
 		canon = canonical_x_keyword(text)
 		if canon:
 			present.add(canon)
+	return present
+
+
+def existing_x_flat_keywords(keywords):
+	"""Exact X-<field>|<value> paths already on the file."""
+	present = set()
+	for keyword in keywords or []:
+		if not keyword:
+			continue
+		text = strip_stray_keyword_quotes(keyword)
+		if not text.lower().startswith("x-"):
+			continue
+		flat = x_flat_keyword_from_managed(text)
+		if flat:
+			present.add(flat)
 	return present
 
 
