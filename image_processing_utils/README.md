@@ -173,7 +173,7 @@ process_queue.py [options]
 | `--log FILE` | `process_queue-<pid>.log` | Log file path |
 | `--force` | | Always overwrite existing destination files, even when MD5 matches |
 | `--safe` | | Write to `_N` suffix paths instead of overwriting |
-| `--keyword MODE` | `hierarchical` | Keyword writes: `flat` / `f` (`X-field\|value`), `hierarchical` / `h` (`dogsportphoto.com\|field\|value`), or `both` / `b` |
+| `--keyword MODE` | `hierarchical` | Keyword writes: `flat` / `f` (`DSP-field\|value`), `hierarchical` / `h` (`dogsportphoto.com\|field\|value`), or `both` / `b` |
 | `-h`, `--help` | | Show usage |
 
 `--force` and `--safe` cannot be used together. `--in-place` cannot be combined with `--force` or `--safe`.
@@ -262,7 +262,7 @@ Keyword form is selected with `--keyword` (default `hierarchical`):
 
 | Mode | Abbreviation | Writes |
 |------|--------------|--------|
-| `flat` | `f` | `X-<field>\|<value>` (short field names such as `dis`, `img`, `photog`) |
+| `flat` | `f` | `DSP-<field>\|<value>` (short field names such as `dis`, `img`, `photog`) |
 | `hierarchical` | `h` | `dogsportphoto.com\|<field>\|<value>` (long field names such as `discipline`, `image_uuid`, `photographer`) |
 | `both` | `b` | Both forms |
 
@@ -273,8 +273,10 @@ When a photo match is found, the script also writes **IPTC Core** metadata via e
 | IPTC field | Source |
 |------------|--------|
 | Title | `{team} - {image_uuid}` (Lightroom Title / `dc:title`) |
+| Alt Text | Same text as Title (`XMP-iptcCore:AltTextAccessibility`) |
 | Headline | `{team} compete in {org} {event}`; duel → `{duel} in {discipline} at {event}` |
 | Caption | Same text as Headline (Lightroom Caption / `dc:description`) |
+| Extended Description | Same text as Caption (`XMP-iptcCore:ExtDescrAccessibility`) |
 | Location | `event.venue` when present |
 | City / State | from event metadata |
 | Creator / Credit | photographer name |
@@ -282,7 +284,7 @@ When a photo match is found, the script also writes **IPTC Core** metadata via e
 | Source | `{event} ({dogsportphoto_code})` |
 | Transmission Reference | `image_uuid` |
 
-Managed keywords are written only to `XMP-lr:HierarchicalSubject`. Writes are additive for the selected `--keyword` mode(s). Parsers still accept `X-*`, `dogsportphoto|*`, and `dogsportphoto.com|*` forms when reading older files.
+Managed keywords are written only to `XMP-lr:HierarchicalSubject`. Writes are additive for the selected `--keyword` mode(s). Parsers still accept `DSP-*`, legacy `X-*`, `dogsportphoto|*`, and `dogsportphoto.com|*` forms when reading older files.
 
 **Event keywords:** `event`, `organization`, `club`, `venue`, `type`, `city`
 
@@ -312,7 +314,7 @@ Example: `dogsportphoto.com|sequence|260731-1614.30512-JN` for a 2026-07-31 16:1
 
 ### Re-processing
 
-In the event of problems processing files, files can be re-processed. Missing `dogsportphoto.com|*` keywords are added; existing keywords (including legacy `X-*` / `dogsportphoto|*`) are left unmodified.
+In the event of problems processing files, files can be re-processed. Missing paths for the selected `--keyword` mode(s) are added; existing keywords (including legacy `X-*` / `dogsportphoto|*`) are left unmodified.
 
 ### Rating (`--rating`)
 

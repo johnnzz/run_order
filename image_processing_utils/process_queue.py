@@ -19,7 +19,7 @@ next to the timeseries file. Each entry records the image name, capture timestam
 and matched handler and dog.
 
 Keyword writes are controlled by ``--keyword``:
-flat (X-field|value), hierarchical (dogsportphoto.com|field|value), or both.
+flat (DSP-field|value), hierarchical (dogsportphoto.com|field|value), or both.
 Writes are additive. Results can be reviewed with the summarize_dir.py script.
 
 Portable and self-contained: only requires docopt (stdlib otherwise).
@@ -156,6 +156,8 @@ INSPECT_TAGS = IMAGE_DATE_TAGS + EXIF_OFFSET_TAGS + SERIAL_NUMBER_TAGS + (
 	"Location",
 	"Source",
 	"TransmissionReference",
+	"AltTextAccessibility",
+	"ExtDescrAccessibility",
 )
 CAMERA_MODEL_TAGS = ("CameraModelName", "Model")
 TIMESTAMP_PREFIX_RE = re.compile(r"^\d{14,20}-")
@@ -350,6 +352,16 @@ def normalize_iptc_scalar(value):
 	"""Collapse list/joined IPTC values to a single de-quoted scalar."""
 	if value is None:
 		return None
+	if isinstance(value, dict):
+		# ExifTool JSON lang-alt (e.g. AltTextAccessibility) uses x-default.
+		for key in ("x-default", "en", "en-US", "en-us"):
+			if key in value:
+				return normalize_iptc_scalar(value.get(key))
+		for item in value.values():
+			normalized = normalize_iptc_scalar(item)
+			if normalized:
+				return normalized
+		return None
 	if isinstance(value, (list, tuple, set)):
 		items = value
 	else:
@@ -394,7 +406,7 @@ def iptc_stored_form_is_clean(raw_value, normalized):
 	"""True when the on-file value is already a single clean scalar."""
 	if raw_value is None or not normalized:
 		return False
-	if isinstance(raw_value, (list, tuple, set)):
+	if isinstance(raw_value, (list, tuple, set, dict)):
 		return False
 	return str(raw_value).strip() == normalized
 
@@ -947,7 +959,7 @@ def _sequence_display_time(moment, time_series):
 	return moment.astimezone(display_tz)
 
 def format_sequence_id(check_in_time, photographer_name, time_series=None):
-	"""Build X-seq value: <yy><mm><dd>-<hh><mm>.<ss><ms>-<initials>."""
+	"""Build sequence id: <yy><mm><dd>-<hh><mm>.<ss><ms>-<initials>."""
 	display = _sequence_display_time(check_in_time, time_series)
 	if display is None:
 		return None
@@ -1034,6 +1046,8 @@ IPTC_SCALAR_FIELDS = (
 	"title",
 	"headline",
 	"caption",
+	"alt_text",
+	"extended_description",
 	"creator",
 	"credit",
 	"rights",
@@ -1048,6 +1062,9 @@ IPTC_FIELD_TAGS = {
 	"title": "Title",
 	"headline": "Headline",
 	"caption": "Description",
+	# IPTC accessibility (Lightroom Alt Text / Extended Description)
+	"alt_text": "AltTextAccessibility",
+	"extended_description": "ExtDescrAccessibility",
 	"creator": "Creator",
 	"credit": "Credit",
 	"rights": "Rights",
@@ -1059,7 +1076,9 @@ IPTC_FIELD_TAGS = {
 }
 
 # Fields rewritten with clear+set on replace_all / force refresh so Lightroom sees updates.
-IPTC_FORCE_REFRESH_FIELDS = frozenset({"headline", "caption"})
+IPTC_FORCE_REFRESH_FIELDS = frozenset(
+	{"headline", "caption", "alt_text", "extended_description"}
+)
 
 def _normalize_exif_list(value):
 	if value is None:
@@ -1168,10 +1187,14 @@ def build_iptc_metadata(time_series, match, image_json, duel_keyword):
 			metadata["headline"] = headline
 			# Lightroom Caption maps to Description / Caption-Abstract.
 			metadata["caption"] = headline
+			# Lightroom Extended Description (IPTC accessibility).
+			metadata["extended_description"] = headline
 
 		title = build_iptc_title(match, image_json)
 		if title:
 			metadata["title"] = title
+			# Lightroom Alt Text (IPTC accessibility).
+			metadata["alt_text"] = title
 
 		photographer = _iptc_text(match.get("photographer"))
 		if photographer:
@@ -1426,7 +1449,7 @@ def put_exif(
 	cmd = ["-m", "-overwrite_original"]
 
 	# Managed keywords are written additively to HierarchicalSubject.
-	# --keyword flat → X-field|value; hierarchical → dogsportphoto.com|field|value;
+	# --keyword flat → DSP-field|value; hierarchical → dogsportphoto.com|field|value;
 	# both → each form. Presence is checked per form on HierarchicalSubject only.
 	final_keywords = canonicalize_managed_keywords(exif_json.get("Keywords", set()))
 	exif_json["Keywords"] = final_keywords
@@ -3872,7 +3895,7 @@ def process_queue(
 
 					assign_image_keyword(image_json)
 					assign_original_filename_keyword(image_json, file)
-					# Drop any leftover X-* / dogsportphoto|* strings before write.
+					# Collapse managed keyword forms to dogsportphoto.com|* before write.
 					image_json["Keywords"] = canonicalize_managed_keywords(image_json["Keywords"])
 					assign_iptc_metadata(image_json, time_series, match, duel_keyword)
 					if in_place:
