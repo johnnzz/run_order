@@ -60,6 +60,9 @@ LEGACY_X_FIELDS = frozenset(
 	}
 )
 
+# Flat Keywords writes (DSP-field: value) are limited to this subset.
+FLAT_KEYWORD_WRITE_FIELDS = frozenset({"handler", "team", "dog", "event"})
+
 
 def normalize_quoted_dog_name(value: str) -> str:
 	text = str(value).strip()
@@ -150,6 +153,18 @@ def x_flat_keyword_from_managed(keyword):
 	"""Convert a managed keyword (any accepted form) to DSP-<field>: <value>."""
 	field, value = parse_x_keyword(keyword)
 	if field is None or not value:
+		return None
+	return format_x_flat_keyword(field, value)
+
+
+def is_flat_keyword_write_field(field):
+	return field in FLAT_KEYWORD_WRITE_FIELDS
+
+
+def x_flat_keyword_for_write(keyword):
+	"""DSP-<field>: <value> only for handler/team/dog/event flat writes."""
+	field, value = parse_x_keyword(keyword)
+	if field is None or not value or not is_flat_keyword_write_field(field):
 		return None
 	return format_x_flat_keyword(field, value)
 
