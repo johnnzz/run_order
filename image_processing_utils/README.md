@@ -266,7 +266,7 @@ Keyword form is selected with `--keyword` (default `hierarchical`):
 | `hierarchical` | `h` | `dogsportphoto.com\|<field>\|<value>` on `XMP-lr:HierarchicalSubject` (long field names such as `discipline`, `image_uuid`, `photographer`) |
 | `both` | `b` | Both forms, each on its own tag |
 
-Existing non-managed keywords are preserved. Selected form(s) are always rewritten: existing `dogsportphoto.com|*` on `HierarchicalSubject` and/or `DSP-*` on `Keywords` are removed, then the full final set is written. Legacy `X-*` / `dogsportphoto|*` entries are left unmodified.
+Existing non-managed keywords are preserved. Selected form(s) are always rewritten: existing `dogsportphoto.com|*` on `HierarchicalSubject` and/or `DSP-field: value` on `Keywords` are removed, then the full final set is written. Obsolete managed spellings (`dogsportphoto|*`, pipe `DSP-*|`, and previously used `X-<field>` tags such as `team`/`handler`/`img`/`id-*`) are removed when keywords are written; unrelated `X-*` keywords are left alone.
 
 When a photo match is found, the script also writes **IPTC Core** metadata via exiftool:
 
@@ -284,7 +284,7 @@ When a photo match is found, the script also writes **IPTC Core** metadata via e
 | Source | `{event} ({dogsportphoto_code})` |
 | Transmission Reference | `image_uuid` |
 
-Hierarchical managed keywords are written to `XMP-lr:HierarchicalSubject`; flat `DSP-field: value` keywords are written to `Keywords`. Selected `--keyword` mode(s) always overwrite their destination entries. Parsers still accept colon and pipe `DSP-*`, legacy `X-*`, `dogsportphoto|*`, and `dogsportphoto.com|*` forms when reading older files.
+Hierarchical managed keywords are written to `XMP-lr:HierarchicalSubject`; flat `DSP-field: value` keywords are written to `Keywords`. Selected `--keyword` mode(s) always overwrite their destination entries. Obsolete `dogsportphoto|*`, pipe `DSP-*|`, and known legacy `X-<field>` entries are removed on write. Parsers still accept those older forms when reading.
 
 **Event keywords:** `event`, `organization`, `club`, `venue`, `type`, `city`
 
@@ -314,7 +314,7 @@ Example: `dogsportphoto.com|sequence|260731-1614.30512-JN` for a 2026-07-31 16:1
 
 ### Re-processing
 
-In the event of problems processing files, files can be re-processed. Selected `--keyword` form(s) are fully rewritten; legacy `X-*` / `dogsportphoto|*` keywords are left unmodified.
+In the event of problems processing files, files can be re-processed. Selected `--keyword` form(s) are fully rewritten; obsolete `X-*` / `dogsportphoto|*` / pipe `DSP-*|` keywords are removed.
 
 ### Rating (`--rating`)
 
