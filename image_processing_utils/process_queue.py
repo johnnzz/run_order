@@ -19,7 +19,7 @@ next to the timeseries file. Each entry records the image name, capture timestam
 and matched handler and dog.
 
 Keyword writes are controlled by ``--keyword``:
-flat writes DSP-field|value into Keywords; hierarchical writes
+flat writes ``DSP-field: value`` into Keywords; hierarchical writes
 dogsportphoto.com|field|value into HierarchicalSubject; both writes each.
 Selected forms are always rewritten (existing managed entries overwritten).
 Results can be reviewed with the summarize_dir.py script.
@@ -1500,7 +1500,7 @@ def put_exif(
 
 	# Managed keyword writes by --keyword mode:
 	# hierarchical → dogsportphoto.com|* on HierarchicalSubject
-	# flat → DSP-* on Keywords
+	# flat → DSP-field: value on Keywords
 	# both → each on its own tag.
 	# Selected forms are always overwritten: remove existing managed entries
 	# on the destination tag, then write the full final set.

@@ -173,7 +173,7 @@ process_queue.py [options]
 | `--log FILE` | `process_queue-<pid>.log` | Log file path |
 | `--force` | | Always overwrite existing destination files, even when MD5 matches |
 | `--safe` | | Write to `_N` suffix paths instead of overwriting |
-| `--keyword MODE` | `hierarchical` | Keyword writes: `flat` / `f` (`DSP-field\|value`), `hierarchical` / `h` (`dogsportphoto.com\|field\|value`), or `both` / `b` |
+| `--keyword MODE` | `hierarchical` | Keyword writes: `flat` / `f` (`DSP-field: value`), `hierarchical` / `h` (`dogsportphoto.com\|field\|value`), or `both` / `b` |
 | `-h`, `--help` | | Show usage |
 
 `--force` and `--safe` cannot be used together. `--in-place` cannot be combined with `--force` or `--safe`.
@@ -262,7 +262,7 @@ Keyword form is selected with `--keyword` (default `hierarchical`):
 
 | Mode | Abbreviation | Writes |
 |------|--------------|--------|
-| `flat` | `f` | `DSP-<field>\|<value>` on the flat `Keywords` tag (short field names such as `dis`, `img`, `photog`) |
+| `flat` | `f` | `DSP-<field>: <value>` on the flat `Keywords` tag (short field names such as `dis`, `img`, `photog`) |
 | `hierarchical` | `h` | `dogsportphoto.com\|<field>\|<value>` on `XMP-lr:HierarchicalSubject` (long field names such as `discipline`, `image_uuid`, `photographer`) |
 | `both` | `b` | Both forms, each on its own tag |
 
@@ -284,7 +284,7 @@ When a photo match is found, the script also writes **IPTC Core** metadata via e
 | Source | `{event} ({dogsportphoto_code})` |
 | Transmission Reference | `image_uuid` |
 
-Hierarchical managed keywords are written to `XMP-lr:HierarchicalSubject`; flat `DSP-*` keywords are written to `Keywords`. Selected `--keyword` mode(s) always overwrite their destination entries. Parsers still accept `DSP-*`, legacy `X-*`, `dogsportphoto|*`, and `dogsportphoto.com|*` forms when reading older files.
+Hierarchical managed keywords are written to `XMP-lr:HierarchicalSubject`; flat `DSP-field: value` keywords are written to `Keywords`. Selected `--keyword` mode(s) always overwrite their destination entries. Parsers still accept colon and pipe `DSP-*`, legacy `X-*`, `dogsportphoto|*`, and `dogsportphoto.com|*` forms when reading older files.
 
 **Event keywords:** `event`, `organization`, `club`, `venue`, `type`, `city`
 
