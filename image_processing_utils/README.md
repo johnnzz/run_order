@@ -266,7 +266,7 @@ Keyword form is selected with `--keyword` (default `hierarchical`):
 | `hierarchical` | `h` | `dogsportphoto.com\|<field>\|<value>` on `XMP-lr:HierarchicalSubject` (long field names such as `discipline`, `image_uuid`, `photographer`) |
 | `both` | `b` | Both forms, each on its own tag |
 
-Existing non-managed keywords are preserved. Missing entries for the selected form(s) are added additively; presence is checked on the destination tag only (`Keywords` for flat, `HierarchicalSubject` for hierarchical).
+Existing non-managed keywords are preserved. Selected form(s) are always rewritten: existing `dogsportphoto.com|*` on `HierarchicalSubject` and/or `DSP-*` on `Keywords` are removed, then the full final set is written. Legacy `X-*` / `dogsportphoto|*` entries are left unmodified.
 
 When a photo match is found, the script also writes **IPTC Core** metadata via exiftool:
 
@@ -284,7 +284,7 @@ When a photo match is found, the script also writes **IPTC Core** metadata via e
 | Source | `{event} ({dogsportphoto_code})` |
 | Transmission Reference | `image_uuid` |
 
-Hierarchical managed keywords are written to `XMP-lr:HierarchicalSubject`; flat `DSP-*` keywords are written to `Keywords`. Writes are additive for the selected `--keyword` mode(s). Parsers still accept `DSP-*`, legacy `X-*`, `dogsportphoto|*`, and `dogsportphoto.com|*` forms when reading older files.
+Hierarchical managed keywords are written to `XMP-lr:HierarchicalSubject`; flat `DSP-*` keywords are written to `Keywords`. Selected `--keyword` mode(s) always overwrite their destination entries. Parsers still accept `DSP-*`, legacy `X-*`, `dogsportphoto|*`, and `dogsportphoto.com|*` forms when reading older files.
 
 **Event keywords:** `event`, `organization`, `club`, `venue`, `type`, `city`
 
@@ -310,11 +310,11 @@ Example: `dogsportphoto.com|sequence|260731-1614.30512-JN` for a 2026-07-31 16:1
 | **`--force`** | Overwrite even when MD5 matches |
 | **`--safe`** | Allocate `_N` suffix filenames |
 | **MD5 skip** | Without `--force`, identical destination content is not re-written |
-| **Keyword diff** | exiftool updates managed keywords only when changed |
+| **Keyword overwrite** | Selected managed keyword forms are always rewritten |
 
 ### Re-processing
 
-In the event of problems processing files, files can be re-processed. Missing paths for the selected `--keyword` mode(s) are added; existing keywords (including legacy `X-*` / `dogsportphoto|*`) are left unmodified.
+In the event of problems processing files, files can be re-processed. Selected `--keyword` form(s) are fully rewritten; legacy `X-*` / `dogsportphoto|*` keywords are left unmodified.
 
 ### Rating (`--rating`)
 

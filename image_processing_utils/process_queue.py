@@ -21,7 +21,8 @@ and matched handler and dog.
 Keyword writes are controlled by ``--keyword``:
 flat writes DSP-field|value into Keywords; hierarchical writes
 dogsportphoto.com|field|value into HierarchicalSubject; both writes each.
-Writes are additive. Results can be reviewed with the summarize_dir.py script.
+Selected forms are always rewritten (existing managed entries overwritten).
+Results can be reviewed with the summarize_dir.py script.
 
 Portable and self-contained: only requires docopt (stdlib otherwise).
 Also requires exiftool on PATH for --process.
@@ -1034,9 +1035,51 @@ def format_hierarchical_subject_add_arg(keyword):
 	# Pass as a single argv element; do not wrap in quotes (subprocess is not a shell).
 	return "-XMP-lr:HierarchicalSubject+={}".format(keyword)
 
+def format_hierarchical_subject_del_arg(keyword):
+	return "-XMP-lr:HierarchicalSubject-={}".format(keyword)
+
 def format_keywords_add_arg(keyword):
 	# Flat DSP-* entries go to the Keywords tag, not HierarchicalSubject.
 	return "-Keywords+={}".format(keyword)
+
+def format_keywords_del_arg(keyword):
+	return "-Keywords-={}".format(keyword)
+
+def exiftool_arg_group_key(arg):
+	"""Tag name for assignment-style args (``-Tag=``, ``-Tag+=``); else None."""
+	if not isinstance(arg, str) or not arg.startswith("-"):
+		return None
+	body = arg[1:]
+	for sep in ("+=", "-=", "="):
+		idx = body.find(sep)
+		if idx != -1:
+			return body[:idx] or None
+	return None
+
+def format_exiftool_running_command(cmd, filename):
+	"""Format exiftool argv for logs with backslash continuations by flag type."""
+	global_flags = []
+	groups = []
+	group_index = {}
+	for arg in cmd:
+		key = exiftool_arg_group_key(arg)
+		if key is None:
+			if not groups:
+				global_flags.append(arg)
+			else:
+				groups.append((arg, [arg]))
+			continue
+		if key not in group_index:
+			group_index[key] = len(groups)
+			groups.append((key, [arg]))
+		else:
+			groups[group_index[key]][1].append(arg)
+
+	parts = [" ".join(["exiftool"] + global_flags)]
+	for _key, args in groups:
+		parts.append("  " + " ".join(args))
+	parts.append("  {}".format(filename))
+	return " \\\n".join(parts)
 
 def append_keyword_write_args(cmd, keyword, *, keyword_mode=KEYWORD_MODE_HIERARCHICAL):
 	canonical = canonical_x_keyword(keyword)
@@ -1458,7 +1501,9 @@ def put_exif(
 	# Managed keyword writes by --keyword mode:
 	# hierarchical → dogsportphoto.com|* on HierarchicalSubject
 	# flat → DSP-* on Keywords
-	# both → each on its own tag. Presence is checked per destination tag.
+	# both → each on its own tag.
+	# Selected forms are always overwritten: remove existing managed entries
+	# on the destination tag, then write the full final set.
 	final_keywords = canonicalize_managed_keywords(exif_json.get("Keywords", set()))
 	exif_json["Keywords"] = final_keywords
 	final_x_keywords = x_keywords(final_keywords)
@@ -1471,14 +1516,16 @@ def put_exif(
 		exif_json.get("original_x_keywords", set()),
 	)
 	if writes_hierarchical_keywords(keyword_mode):
-		already_hierarchical = existing_dogsportphoto_com_keywords(hierarchical_originals)
-		for keyword in sorted(final_x_keywords - already_hierarchical):
+		for keyword in sorted(existing_dogsportphoto_com_keywords(hierarchical_originals)):
+			cmd.append(format_hierarchical_subject_del_arg(keyword))
+		for keyword in sorted(final_x_keywords):
 			cmd.append(format_hierarchical_subject_add_arg(keyword))
 	if writes_flat_keywords(keyword_mode):
-		already_flat = existing_x_flat_keywords(flat_originals)
+		for flat in sorted(existing_x_flat_keywords(flat_originals)):
+			cmd.append(format_keywords_del_arg(flat))
 		for keyword in sorted(final_x_keywords):
 			flat = x_flat_keyword_from_managed(keyword)
-			if flat and flat not in already_flat:
+			if flat:
 				cmd.append(format_keywords_add_arg(flat))
 
 	cmd.extend(
@@ -1492,7 +1539,7 @@ def put_exif(
 	if "add default rating" in exif_json["log"]:
 		cmd.append("-rating={}".format(exif_json["Rating"]))
 
-	logger.info("* Running: exiftool %s %s", " ".join(cmd), filename)
+	logger.info("* Running: %s", format_exiftool_running_command(cmd, filename))
 	try:
 		if session is not None:
 			result = session.write(cmd, filename)
