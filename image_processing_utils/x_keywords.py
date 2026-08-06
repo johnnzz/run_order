@@ -123,15 +123,15 @@ def format_keyword(field, value):
 
 
 def format_x_flat_keyword(field, value):
-	"""Return DSP-<short_field>|<value> flat hierarchical path."""
+	"""Return DSP-<short_field>: <value> flat keyword."""
 	text = _normalized_keyword_value(field, value)
 	if text is None:
 		return None
-	return "{}{}|{}".format(FLAT_KEYWORD_PREFIX, _canonicalize_field_name(field), text)
+	return "{}{}: {}".format(FLAT_KEYWORD_PREFIX, _canonicalize_field_name(field), text)
 
 
 def x_flat_keyword_from_managed(keyword):
-	"""Convert a managed keyword (any accepted form) to DSP-<field>|<value>."""
+	"""Convert a managed keyword (any accepted form) to DSP-<field>: <value>."""
 	field, value = parse_x_keyword(keyword)
 	if field is None or not value:
 		return None
@@ -194,7 +194,7 @@ def existing_dogsportphoto_com_keywords(keywords):
 
 
 def existing_x_flat_keywords(keywords):
-	"""Exact DSP-<field>|<value> paths already on the file (legacy X-* ignored)."""
+	"""Exact on-file DSP-* keywords (colon or pipe); legacy X-* ignored."""
 	present = set()
 	prefix = FLAT_KEYWORD_PREFIX.lower()
 	for keyword in keywords or []:
@@ -203,9 +203,9 @@ def existing_x_flat_keywords(keywords):
 		text = strip_stray_keyword_quotes(keyword)
 		if not text.lower().startswith(prefix):
 			continue
-		flat = x_flat_keyword_from_managed(text)
-		if flat:
-			present.add(flat)
+		# Keep the on-file spelling so overwrite deletes match exactly.
+		if x_flat_keyword_from_managed(text):
+			present.add(text)
 	return present
 
 
