@@ -1045,6 +1045,42 @@ def format_keywords_add_arg(keyword):
 def format_keywords_del_arg(keyword):
 	return "-Keywords-={}".format(keyword)
 
+def exiftool_arg_group_key(arg):
+	"""Tag name for assignment-style args (``-Tag=``, ``-Tag+=``); else None."""
+	if not isinstance(arg, str) or not arg.startswith("-"):
+		return None
+	body = arg[1:]
+	for sep in ("+=", "-=", "="):
+		idx = body.find(sep)
+		if idx != -1:
+			return body[:idx] or None
+	return None
+
+def format_exiftool_running_command(cmd, filename):
+	"""Format exiftool argv for logs with backslash continuations by flag type."""
+	global_flags = []
+	groups = []
+	group_index = {}
+	for arg in cmd:
+		key = exiftool_arg_group_key(arg)
+		if key is None:
+			if not groups:
+				global_flags.append(arg)
+			else:
+				groups.append((arg, [arg]))
+			continue
+		if key not in group_index:
+			group_index[key] = len(groups)
+			groups.append((key, [arg]))
+		else:
+			groups[group_index[key]][1].append(arg)
+
+	parts = [" ".join(["exiftool"] + global_flags)]
+	for _key, args in groups:
+		parts.append("  " + " ".join(args))
+	parts.append("  {}".format(filename))
+	return " \\\n".join(parts)
+
 def append_keyword_write_args(cmd, keyword, *, keyword_mode=KEYWORD_MODE_HIERARCHICAL):
 	canonical = canonical_x_keyword(keyword)
 	if canonical is None:
@@ -1503,7 +1539,7 @@ def put_exif(
 	if "add default rating" in exif_json["log"]:
 		cmd.append("-rating={}".format(exif_json["Rating"]))
 
-	logger.info("* Running: exiftool %s %s", " ".join(cmd), filename)
+	logger.info("* Running: %s", format_exiftool_running_command(cmd, filename))
 	try:
 		if session is not None:
 			result = session.write(cmd, filename)
