@@ -173,7 +173,7 @@ process_queue.py [options]
 | `--log FILE` | `process_queue-<pid>.log` | Log file path |
 | `--force` | | Always overwrite existing destination files, even when MD5 matches |
 | `--safe` | | Write to `_N` suffix paths instead of overwriting |
-| `--keyword MODE` | `hierarchical` | Keyword writes: `flat` / `f` (`DSP-field: value`), `hierarchical` / `h` (`dogsportphoto.com\|field\|value`), or `both` / `b` |
+| `--keyword MODE` | `hierarchical` | Keyword writes: `flat` / `f` (`DSP-field: value` for handler/team/dog/event), `hierarchical` / `h` (`dogsportphoto.com\|field\|value`), or `both` / `b` |
 | `-h`, `--help` | | Show usage |
 
 `--force` and `--safe` cannot be used together. `--in-place` cannot be combined with `--force` or `--safe`.
@@ -262,8 +262,8 @@ Keyword form is selected with `--keyword` (default `hierarchical`):
 
 | Mode | Abbreviation | Writes |
 |------|--------------|--------|
-| `flat` | `f` | `DSP-<field>: <value>` on the flat `Keywords` tag (short field names such as `dis`, `img`, `photog`) |
-| `hierarchical` | `h` | `dogsportphoto.com\|<field>\|<value>` on `XMP-lr:HierarchicalSubject` (long field names such as `discipline`, `image_uuid`, `photographer`) |
+| `flat` | `f` | `DSP-<field>: <value>` on the flat `Keywords` tag for `handler`, `team`, `dog`, and `event` only |
+| `hierarchical` | `h` | `dogsportphoto.com\|<field>\|<value>` on `XMP-lr:HierarchicalSubject` (full managed field set) |
 | `both` | `b` | Both forms, each on its own tag |
 
 Existing non-managed keywords are preserved. Selected form(s) are always rewritten: existing `dogsportphoto.com|*` on `HierarchicalSubject` and/or `DSP-field: value` on `Keywords` are removed, then the full final set is written. Obsolete managed spellings (`dogsportphoto|*`, pipe `DSP-*|`, and previously used `X-<field>` tags such as `team`/`handler`/`img`/`id-*`) are removed when keywords are written; unrelated `X-*` keywords are left alone.
@@ -284,7 +284,7 @@ When a photo match is found, the script also writes **IPTC Core** metadata via e
 | Source | `{event} ({dogsportphoto_code})` |
 | Transmission Reference | `image_uuid` |
 
-Hierarchical managed keywords are written to `XMP-lr:HierarchicalSubject`; flat `DSP-field: value` keywords are written to `Keywords`. Selected `--keyword` mode(s) always overwrite their destination entries. Obsolete `dogsportphoto|*`, pipe `DSP-*|`, and known legacy `X-<field>` entries are removed on write. Parsers still accept those older forms when reading.
+Hierarchical managed keywords are written to `XMP-lr:HierarchicalSubject`; flat `DSP-field: value` keywords are written to `Keywords` for `handler` / `team` / `dog` / `event` only (colon form, never pipe). Selected `--keyword` mode(s) always overwrite their destination entries. Obsolete `dogsportphoto|*`, pipe `DSP-*|`, and known legacy `X-<field>` entries are removed on write. Parsers still accept those older forms when reading.
 
 **Event keywords:** `event`, `organization`, `club`, `venue`, `type`, `city`
 

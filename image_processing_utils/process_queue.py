@@ -19,8 +19,9 @@ next to the timeseries file. Each entry records the image name, capture timestam
 and matched handler and dog.
 
 Keyword writes are controlled by ``--keyword``:
-flat writes ``DSP-field: value`` into Keywords; hierarchical writes
-dogsportphoto.com|field|value into HierarchicalSubject; both writes each.
+flat writes ``DSP-field: value`` into Keywords for handler/team/dog/event only;
+hierarchical writes dogsportphoto.com|field|value into HierarchicalSubject;
+both writes each.
 Selected forms are always rewritten (existing managed entries overwritten).
 Results can be reviewed with the summarize_dir.py script.
 
@@ -101,6 +102,7 @@ from x_keywords import (
 	obsolete_managed_keywords,
 	strip_match_x_keywords,
 	strip_stray_keyword_quotes,
+	x_flat_keyword_for_write,
 	x_flat_keyword_from_managed,
 )
 
@@ -1089,7 +1091,7 @@ def append_keyword_write_args(cmd, keyword, *, keyword_mode=KEYWORD_MODE_HIERARC
 	if writes_hierarchical_keywords(keyword_mode):
 		cmd.append(format_hierarchical_subject_add_arg(canonical))
 	if writes_flat_keywords(keyword_mode):
-		flat = x_flat_keyword_from_managed(canonical)
+		flat = x_flat_keyword_for_write(canonical)
 		if flat:
 			cmd.append(format_keywords_add_arg(flat))
 
@@ -1501,10 +1503,11 @@ def put_exif(
 
 	# Managed keyword writes by --keyword mode:
 	# hierarchical → dogsportphoto.com|* on HierarchicalSubject
-	# flat → DSP-field: value on Keywords
+	# flat → DSP-field: value on Keywords (handler/team/dog/event only)
 	# both → each on its own tag.
 	# Selected forms are always overwritten. Obsolete spellings
 	# (X-*, dogsportphoto|*, DSP-*|) are always removed when writing.
+	# Flat mode also removes any existing DSP-* before rewriting the subset.
 	final_keywords = canonicalize_managed_keywords(exif_json.get("Keywords", set()))
 	exif_json["Keywords"] = final_keywords
 	final_x_keywords = x_keywords(final_keywords)
@@ -1533,7 +1536,7 @@ def put_exif(
 		cmd.append(format_keywords_del_arg(flat))
 	if writes_flat_keywords(keyword_mode):
 		for keyword in sorted(final_x_keywords):
-			flat = x_flat_keyword_from_managed(keyword)
+			flat = x_flat_keyword_for_write(keyword)
 			if flat:
 				cmd.append(format_keywords_add_arg(flat))
 
