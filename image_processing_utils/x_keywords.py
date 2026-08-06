@@ -44,6 +44,22 @@ MATCH_X_FIELDS = frozenset(
 	}
 )
 
+# Short field names previously written as X-<field>: <value> / X-<field>|<value>.
+# Only these (plus id-<org>) are scrubbed on write; other X-* keywords are kept.
+LEGACY_X_FIELDS = frozenset(
+	MATCH_X_FIELDS
+	| {
+		"img",
+		"ofn",
+		"org",
+		"event",
+		"club",
+		"venue",
+		"type",
+		"city",
+	}
+)
+
 
 def normalize_quoted_dog_name(value: str) -> str:
 	text = str(value).strip()
@@ -205,6 +221,42 @@ def existing_x_flat_keywords(keywords):
 			continue
 		# Keep the on-file spelling so overwrite deletes match exactly.
 		if x_flat_keyword_from_managed(text):
+			present.add(text)
+	return present
+
+
+def is_legacy_x_field(field):
+	"""True for short fields (or id-<org>) previously written under the X- prefix."""
+	if not field:
+		return False
+	if field.startswith("id-"):
+		return True
+	return field in LEGACY_X_FIELDS
+
+
+def is_obsolete_managed_keyword(keyword):
+	"""True for known legacy X-* fields, dogsportphoto|* (no .com), and DSP-*|."""
+	text = strip_stray_keyword_quotes(keyword)
+	if not text or not is_x_keyword(text):
+		return False
+	lower = text.lower()
+	if lower.startswith("x-"):
+		return is_legacy_x_field(keyword_x_field(text))
+	if lower.startswith("dogsportphoto|"):
+		return True
+	if lower.startswith("dsp-") and FLAT_KEYWORD_HIER_RE.match(text):
+		return True
+	return False
+
+
+def obsolete_managed_keywords(keywords):
+	"""Exact on-file obsolete managed spellings to remove when writing keywords."""
+	present = set()
+	for keyword in keywords or []:
+		if not keyword:
+			continue
+		text = strip_stray_keyword_quotes(keyword)
+		if is_obsolete_managed_keyword(text):
 			present.add(text)
 	return present
 

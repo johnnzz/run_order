@@ -98,6 +98,7 @@ from x_keywords import (
 	keyword_x_field,
 	keyword_x_value,
 	normalize_quoted_dog_name,
+	obsolete_managed_keywords,
 	strip_match_x_keywords,
 	strip_stray_keyword_quotes,
 	x_flat_keyword_from_managed,
@@ -1502,8 +1503,8 @@ def put_exif(
 	# hierarchical → dogsportphoto.com|* on HierarchicalSubject
 	# flat → DSP-field: value on Keywords
 	# both → each on its own tag.
-	# Selected forms are always overwritten: remove existing managed entries
-	# on the destination tag, then write the full final set.
+	# Selected forms are always overwritten. Obsolete spellings
+	# (X-*, dogsportphoto|*, DSP-*|) are always removed when writing.
 	final_keywords = canonicalize_managed_keywords(exif_json.get("Keywords", set()))
 	exif_json["Keywords"] = final_keywords
 	final_x_keywords = x_keywords(final_keywords)
@@ -1515,14 +1516,22 @@ def put_exif(
 		"original_flat_keywords",
 		exif_json.get("original_x_keywords", set()),
 	)
+	hierarchical_deletes = obsolete_managed_keywords(hierarchical_originals)
+	flat_deletes = obsolete_managed_keywords(flat_originals)
 	if writes_hierarchical_keywords(keyword_mode):
-		for keyword in sorted(existing_dogsportphoto_com_keywords(hierarchical_originals)):
-			cmd.append(format_hierarchical_subject_del_arg(keyword))
+		hierarchical_deletes.update(
+			existing_dogsportphoto_com_keywords(hierarchical_originals)
+		)
+	if writes_flat_keywords(keyword_mode):
+		flat_deletes.update(existing_x_flat_keywords(flat_originals))
+	for keyword in sorted(hierarchical_deletes):
+		cmd.append(format_hierarchical_subject_del_arg(keyword))
+	if writes_hierarchical_keywords(keyword_mode):
 		for keyword in sorted(final_x_keywords):
 			cmd.append(format_hierarchical_subject_add_arg(keyword))
+	for flat in sorted(flat_deletes):
+		cmd.append(format_keywords_del_arg(flat))
 	if writes_flat_keywords(keyword_mode):
-		for flat in sorted(existing_x_flat_keywords(flat_originals)):
-			cmd.append(format_keywords_del_arg(flat))
 		for keyword in sorted(final_x_keywords):
 			flat = x_flat_keyword_from_managed(keyword)
 			if flat:
