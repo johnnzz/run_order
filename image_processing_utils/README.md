@@ -262,11 +262,11 @@ Keyword form is selected with `--keyword` (default `hierarchical`):
 
 | Mode | Abbreviation | Writes |
 |------|--------------|--------|
-| `flat` | `f` | `DSP-<field>\|<value>` (short field names such as `dis`, `img`, `photog`) |
-| `hierarchical` | `h` | `dogsportphoto.com\|<field>\|<value>` (long field names such as `discipline`, `image_uuid`, `photographer`) |
-| `both` | `b` | Both forms |
+| `flat` | `f` | `DSP-<field>\|<value>` on the flat `Keywords` tag (short field names such as `dis`, `img`, `photog`) |
+| `hierarchical` | `h` | `dogsportphoto.com\|<field>\|<value>` on `XMP-lr:HierarchicalSubject` (long field names such as `discipline`, `image_uuid`, `photographer`) |
+| `both` | `b` | Both forms, each on its own tag |
 
-Existing non-managed keywords are preserved. Missing paths for the selected form(s) are added to `XMP-lr:HierarchicalSubject` only; other forms already on the file are left untouched. Presence is checked per form on HierarchicalSubject (flat Keywords copies do not suppress adds).
+Existing non-managed keywords are preserved. Missing entries for the selected form(s) are added additively; presence is checked on the destination tag only (`Keywords` for flat, `HierarchicalSubject` for hierarchical).
 
 When a photo match is found, the script also writes **IPTC Core** metadata via exiftool:
 
@@ -284,7 +284,7 @@ When a photo match is found, the script also writes **IPTC Core** metadata via e
 | Source | `{event} ({dogsportphoto_code})` |
 | Transmission Reference | `image_uuid` |
 
-Managed keywords are written only to `XMP-lr:HierarchicalSubject`. Writes are additive for the selected `--keyword` mode(s). Parsers still accept `DSP-*`, legacy `X-*`, `dogsportphoto|*`, and `dogsportphoto.com|*` forms when reading older files.
+Hierarchical managed keywords are written to `XMP-lr:HierarchicalSubject`; flat `DSP-*` keywords are written to `Keywords`. Writes are additive for the selected `--keyword` mode(s). Parsers still accept `DSP-*`, legacy `X-*`, `dogsportphoto|*`, and `dogsportphoto.com|*` forms when reading older files.
 
 **Event keywords:** `event`, `organization`, `club`, `venue`, `type`, `city`
 

@@ -19,7 +19,8 @@ next to the timeseries file. Each entry records the image name, capture timestam
 and matched handler and dog.
 
 Keyword writes are controlled by ``--keyword``:
-flat (DSP-field|value), hierarchical (dogsportphoto.com|field|value), or both.
+flat writes DSP-field|value into Keywords; hierarchical writes
+dogsportphoto.com|field|value into HierarchicalSubject; both writes each.
 Writes are additive. Results can be reviewed with the summarize_dir.py script.
 
 Portable and self-contained: only requires docopt (stdlib otherwise).
@@ -589,12 +590,14 @@ def normalize_exif_json(exif_json, filename, *, session=None):
 	]
 	non_x_keywords = preserve_non_x_keywords(keyword_values)
 	hierarchical_x_keywords = x_keywords(hierarchical_values)
+	flat_x_keywords = x_keywords(keyword_values)
 	x_keyword_values = set(hierarchical_x_keywords)
-	x_keyword_values.update(x_keywords(keyword_values))
+	x_keyword_values.update(flat_x_keywords)
 	image_keywords = non_x_keywords | x_keyword_values
-	# Presence checks for additive HierarchicalSubject writes must use the
-	# hierarchical tag only — flat Keywords copies must not suppress adds.
+	# Presence checks are tag-specific:
+	# hierarchical → HierarchicalSubject; flat DSP-* → Keywords.
 	exif_json["original_hierarchical_subjects"] = set(hierarchical_x_keywords)
+	exif_json["original_flat_keywords"] = set(flat_x_keywords)
 	exif_json["original_x_keywords"] = set(x_keyword_values)
 	exif_json["Keywords"] = image_keywords
 	exif_json["original_iptc_metadata"] = read_iptc_metadata(exif_json)
@@ -1031,6 +1034,10 @@ def format_hierarchical_subject_add_arg(keyword):
 	# Pass as a single argv element; do not wrap in quotes (subprocess is not a shell).
 	return "-XMP-lr:HierarchicalSubject+={}".format(keyword)
 
+def format_keywords_add_arg(keyword):
+	# Flat DSP-* entries go to the Keywords tag, not HierarchicalSubject.
+	return "-Keywords+={}".format(keyword)
+
 def append_keyword_write_args(cmd, keyword, *, keyword_mode=KEYWORD_MODE_HIERARCHICAL):
 	canonical = canonical_x_keyword(keyword)
 	if canonical is None:
@@ -1040,7 +1047,7 @@ def append_keyword_write_args(cmd, keyword, *, keyword_mode=KEYWORD_MODE_HIERARC
 	if writes_flat_keywords(keyword_mode):
 		flat = x_flat_keyword_from_managed(canonical)
 		if flat:
-			cmd.append(format_hierarchical_subject_add_arg(flat))
+			cmd.append(format_keywords_add_arg(flat))
 
 IPTC_SCALAR_FIELDS = (
 	"title",
@@ -1448,9 +1455,10 @@ def put_exif(
 
 	cmd = ["-m", "-overwrite_original"]
 
-	# Managed keywords are written additively to HierarchicalSubject.
-	# --keyword flat → DSP-field|value; hierarchical → dogsportphoto.com|field|value;
-	# both → each form. Presence is checked per form on HierarchicalSubject only.
+	# Managed keyword writes by --keyword mode:
+	# hierarchical → dogsportphoto.com|* on HierarchicalSubject
+	# flat → DSP-* on Keywords
+	# both → each on its own tag. Presence is checked per destination tag.
 	final_keywords = canonicalize_managed_keywords(exif_json.get("Keywords", set()))
 	exif_json["Keywords"] = final_keywords
 	final_x_keywords = x_keywords(final_keywords)
@@ -1458,16 +1466,20 @@ def put_exif(
 		"original_hierarchical_subjects",
 		exif_json.get("original_x_keywords", set()),
 	)
+	flat_originals = exif_json.get(
+		"original_flat_keywords",
+		exif_json.get("original_x_keywords", set()),
+	)
 	if writes_hierarchical_keywords(keyword_mode):
 		already_hierarchical = existing_dogsportphoto_com_keywords(hierarchical_originals)
 		for keyword in sorted(final_x_keywords - already_hierarchical):
 			cmd.append(format_hierarchical_subject_add_arg(keyword))
 	if writes_flat_keywords(keyword_mode):
-		already_flat = existing_x_flat_keywords(hierarchical_originals)
+		already_flat = existing_x_flat_keywords(flat_originals)
 		for keyword in sorted(final_x_keywords):
 			flat = x_flat_keyword_from_managed(keyword)
 			if flat and flat not in already_flat:
-				cmd.append(format_hierarchical_subject_add_arg(flat))
+				cmd.append(format_keywords_add_arg(flat))
 
 	cmd.extend(
 		iptc_metadata_args(
