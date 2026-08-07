@@ -18,11 +18,10 @@ When --process completes, a photo summary JSON file named <event>-ps.json is wri
 next to the timeseries file. Each entry records the image name, capture timestamp,
 and matched handler and dog.
 
-Keyword writes are controlled by ``--keyword``:
-flat writes ``DSP-field: value`` into Keywords for handler/team/dog/event only;
-hierarchical writes dogsportphoto.com|field|value into HierarchicalSubject;
-both writes each.
-Selected forms are always rewritten (existing managed entries overwritten).
+Hierarchical keywords (dogsportphoto.com|field|value) are always written to
+HierarchicalSubject. Flat Keywords writes are controlled by ``--flat-keyword``
+(default on): X-team (or X-handler when no team) plus X-event, with optional
+extra tags from ``--add-flat``. Managed keyword forms are rewritten on write.
 Results can be reviewed with the summarize_dir.py script.
 
 Portable and self-contained: only requires docopt (stdlib otherwise).
@@ -48,8 +47,12 @@ Options:
   --force                 Always overwrite existing destination files.
   --safe                  Write to _N suffix paths instead of overwriting.
   --output MODE           Output layout: flat or subdir [default: flat].
-  --keyword MODE          Keyword writes: flat, hierarchical, or both
-                          (f/h/b) [default: hierarchical].
+  --flat-keyword MODE     Write flat X- keywords: on or off [default: on].
+  --add-flat TAGS         Extra flat X- tags when --flat-keyword is on
+                          (comma-separated). Available: city, club, dis,
+                          dog, duel, event, handler, img, loc, msg, ofn,
+                          org, photog, photoreq, seq, team, type, venue,
+                          id-<org>.
   --verbosity LEVEL       Console output: quiet or full [default: quiet].
   -h, --help              Show this message.
 """
@@ -89,21 +92,22 @@ from stage_into_dirs import (
 	staging_dir_names_from_keywords,
 )
 from x_keywords import (
+	ADD_FLAT_USAGE_LIST,
 	format_keyword,
 	is_match_x_keyword,
 	is_x_keyword,
 	canonical_x_keyword,
 	canonicalize_managed_keywords,
 	existing_dogsportphoto_com_keywords,
-	existing_x_flat_keywords,
+	existing_managed_flat_keywords,
 	keyword_x_field,
 	keyword_x_value,
+	normalize_add_flat_tag,
 	normalize_quoted_dog_name,
 	obsolete_managed_keywords,
+	select_flat_keywords_for_write,
 	strip_match_x_keywords,
 	strip_stray_keyword_quotes,
-	x_flat_keyword_for_write,
-	x_flat_keyword_from_managed,
 )
 
 logger = logging.getLogger(__name__)
@@ -1002,37 +1006,61 @@ def build_sequence_ids(queue_entries, time_series):
 
 	return sequence_ids
 
-KEYWORD_MODE_FLAT = "flat"
-KEYWORD_MODE_HIERARCHICAL = "hierarchical"
-KEYWORD_MODE_BOTH = "both"
-KEYWORD_MODES = (KEYWORD_MODE_FLAT, KEYWORD_MODE_HIERARCHICAL, KEYWORD_MODE_BOTH)
+FLAT_KEYWORD_ON = "on"
+FLAT_KEYWORD_OFF = "off"
+FLAT_KEYWORD_MODES = (FLAT_KEYWORD_ON, FLAT_KEYWORD_OFF)
 
-def parse_keyword_mode(value):
+def parse_flat_keyword_mode(value):
 	if value is None:
-		return KEYWORD_MODE_HIERARCHICAL
+		return FLAT_KEYWORD_ON
 	text = str(value).strip().lower()
 	aliases = {
-		"f": KEYWORD_MODE_FLAT,
-		"flat": KEYWORD_MODE_FLAT,
-		"h": KEYWORD_MODE_HIERARCHICAL,
-		"hierarchical": KEYWORD_MODE_HIERARCHICAL,
-		"b": KEYWORD_MODE_BOTH,
-		"both": KEYWORD_MODE_BOTH,
+		"on": FLAT_KEYWORD_ON,
+		"true": FLAT_KEYWORD_ON,
+		"1": FLAT_KEYWORD_ON,
+		"yes": FLAT_KEYWORD_ON,
+		"off": FLAT_KEYWORD_OFF,
+		"false": FLAT_KEYWORD_OFF,
+		"0": FLAT_KEYWORD_OFF,
+		"no": FLAT_KEYWORD_OFF,
 	}
 	mode = aliases.get(text)
 	if mode is None:
 		raise SystemExit(
-			"Invalid --keyword value: {} (expected flat, hierarchical, both, or f/h/b)".format(
-				value
-			)
+			"Invalid --flat-keyword value: {} (expected on or off)".format(value)
 		)
 	return mode
 
-def writes_flat_keywords(keyword_mode):
-	return keyword_mode in {KEYWORD_MODE_FLAT, KEYWORD_MODE_BOTH}
-
-def writes_hierarchical_keywords(keyword_mode):
-	return keyword_mode in {KEYWORD_MODE_HIERARCHICAL, KEYWORD_MODE_BOTH}
+def parse_add_flat_tags(value):
+	"""Parse comma-separated --add-flat tags into short field names."""
+	if value is None:
+		return []
+	text = str(value).strip()
+	if not text:
+		return []
+	tags = []
+	seen = set()
+	invalid = []
+	for part in text.split(","):
+		raw = part.strip()
+		if not raw:
+			continue
+		normalized = normalize_add_flat_tag(raw)
+		if normalized is None:
+			invalid.append(raw)
+			continue
+		if normalized in seen:
+			continue
+		seen.add(normalized)
+		tags.append(normalized)
+	if invalid:
+		raise SystemExit(
+			"Invalid --add-flat tag(s): {} (available: {})".format(
+				", ".join(invalid),
+				ADD_FLAT_USAGE_LIST,
+			)
+		)
+	return tags
 
 def format_hierarchical_subject_add_arg(keyword):
 	# Pass as a single argv element; do not wrap in quotes (subprocess is not a shell).
@@ -1042,7 +1070,7 @@ def format_hierarchical_subject_del_arg(keyword):
 	return "-XMP-lr:HierarchicalSubject-={}".format(keyword)
 
 def format_keywords_add_arg(keyword):
-	# Flat DSP-* entries go to the Keywords tag, not HierarchicalSubject.
+	# Flat X-* entries go to the Keywords tag, not HierarchicalSubject.
 	return "-Keywords+={}".format(keyword)
 
 def format_keywords_del_arg(keyword):
@@ -1084,15 +1112,13 @@ def format_exiftool_running_command(cmd, filename):
 	parts.append("  {}".format(filename))
 	return " \\\n".join(parts)
 
-def append_keyword_write_args(cmd, keyword, *, keyword_mode=KEYWORD_MODE_HIERARCHICAL):
+def append_keyword_write_args(cmd, keyword, *, flat_keyword=True, add_flat_fields=()):
 	canonical = canonical_x_keyword(keyword)
 	if canonical is None:
 		return
-	if writes_hierarchical_keywords(keyword_mode):
-		cmd.append(format_hierarchical_subject_add_arg(canonical))
-	if writes_flat_keywords(keyword_mode):
-		flat = x_flat_keyword_for_write(canonical)
-		if flat:
+	cmd.append(format_hierarchical_subject_add_arg(canonical))
+	if flat_keyword:
+		for flat in sorted(select_flat_keywords_for_write([canonical], add_flat_fields)):
 			cmd.append(format_keywords_add_arg(flat))
 
 IPTC_SCALAR_FIELDS = (
@@ -1491,7 +1517,8 @@ def put_exif(
 	output_path=None,
 	*,
 	session=None,
-	keyword_mode=KEYWORD_MODE_HIERARCHICAL,
+	flat_keyword=True,
+	add_flat_fields=(),
 ):
 
 	# if log is empty, we didn't do anything
@@ -1501,13 +1528,9 @@ def put_exif(
 
 	cmd = ["-m", "-overwrite_original"]
 
-	# Managed keyword writes by --keyword mode:
-	# hierarchical → dogsportphoto.com|* on HierarchicalSubject
-	# flat → DSP-field: value on Keywords (handler/team/dog/event only)
-	# both → each on its own tag.
-	# Selected forms are always overwritten. Obsolete spellings
-	# (X-*, dogsportphoto|*, DSP-*|) are always removed when writing.
-	# Flat mode also removes any existing DSP-* before rewriting the subset.
+	# Hierarchical dogsportphoto.com|* is always rewritten on HierarchicalSubject.
+	# Flat X-* Keywords writes are optional (--flat-keyword). Obsolete managed
+	# spellings (known X-*/DSP-*, dogsportphoto|*) are always removed.
 	final_keywords = canonicalize_managed_keywords(exif_json.get("Keywords", set()))
 	exif_json["Keywords"] = final_keywords
 	final_x_keywords = x_keywords(final_keywords)
@@ -1520,25 +1543,22 @@ def put_exif(
 		exif_json.get("original_x_keywords", set()),
 	)
 	hierarchical_deletes = obsolete_managed_keywords(hierarchical_originals)
+	hierarchical_deletes.update(
+		existing_dogsportphoto_com_keywords(hierarchical_originals)
+	)
 	flat_deletes = obsolete_managed_keywords(flat_originals)
-	if writes_hierarchical_keywords(keyword_mode):
-		hierarchical_deletes.update(
-			existing_dogsportphoto_com_keywords(hierarchical_originals)
-		)
-	if writes_flat_keywords(keyword_mode):
-		flat_deletes.update(existing_x_flat_keywords(flat_originals))
+	flat_deletes.update(existing_managed_flat_keywords(flat_originals))
 	for keyword in sorted(hierarchical_deletes):
 		cmd.append(format_hierarchical_subject_del_arg(keyword))
-	if writes_hierarchical_keywords(keyword_mode):
-		for keyword in sorted(final_x_keywords):
-			cmd.append(format_hierarchical_subject_add_arg(keyword))
+	for keyword in sorted(final_x_keywords):
+		cmd.append(format_hierarchical_subject_add_arg(keyword))
 	for flat in sorted(flat_deletes):
 		cmd.append(format_keywords_del_arg(flat))
-	if writes_flat_keywords(keyword_mode):
-		for keyword in sorted(final_x_keywords):
-			flat = x_flat_keyword_for_write(keyword)
-			if flat:
-				cmd.append(format_keywords_add_arg(flat))
+	if flat_keyword:
+		for flat in sorted(
+			select_flat_keywords_for_write(final_x_keywords, add_flat_fields)
+		):
+			cmd.append(format_keywords_add_arg(flat))
 
 	cmd.extend(
 		iptc_metadata_args(
@@ -3647,7 +3667,8 @@ def process_queue(
 	in_place=False,
 	timeline_path=None,
 	output_mode=OUTPUT_MODE_FLAT,
-	keyword_mode=KEYWORD_MODE_HIERARCHICAL,
+	flat_keyword=True,
+	add_flat_fields=(),
 	verbosity=VERBOSITY_QUIET,
 ):
 	install_graceful_interrupt_handler()
@@ -3976,7 +3997,8 @@ def process_queue(
 							queue_file,
 							queue_file,
 							session=exif_session,
-							keyword_mode=keyword_mode,
+							flat_keyword=flat_keyword,
+							add_flat_fields=add_flat_fields,
 						)
 						processed_file = queue_file
 						summary_root = queue_dir
@@ -3997,7 +4019,8 @@ def process_queue(
 							queue_file,
 							processed_file,
 							session=exif_session,
-							keyword_mode=keyword_mode,
+							flat_keyword=flat_keyword,
+							add_flat_fields=add_flat_fields,
 						)
 						if backup_dir and backup_file:
 							backup_file, backed_up = copy_destination(
@@ -4111,11 +4134,20 @@ def main():
 				print_quiet_status("In-place mode: metadata only", verbosity=verbosity)
 		time_series = load_time_series(timeline_path, merge_path=merge_path)
 		output_mode = parse_output_mode(args["--output"])
-		keyword_mode = parse_keyword_mode(args["--keyword"])
+		flat_keyword = parse_flat_keyword_mode(args["--flat-keyword"]) == FLAT_KEYWORD_ON
+		add_flat_fields = parse_add_flat_tags(args["--add-flat"])
 		if detail_logs:
 			if not in_place:
 				logger.info("Output layout: %s", output_mode)
-			logger.info("Keyword mode: %s", keyword_mode)
+			logger.info(
+				"Flat keywords: %s%s",
+				"on" if flat_keyword else "off",
+				(
+					" (add-flat: {})".format(", ".join(add_flat_fields))
+					if add_flat_fields
+					else ""
+				),
+			)
 			logger.info("Starting queue processing...")
 		process_queue(
 			queue_dir=queue_dir,
@@ -4128,7 +4160,8 @@ def main():
 			in_place=in_place,
 			timeline_path=timeline_path,
 			output_mode=output_mode,
-			keyword_mode=keyword_mode,
+			flat_keyword=flat_keyword,
+			add_flat_fields=add_flat_fields,
 			verbosity=verbosity,
 		)
 		if detail_logs:
