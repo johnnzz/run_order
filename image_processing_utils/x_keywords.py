@@ -3,10 +3,10 @@ from __future__ import annotations
 import re
 
 _QUOTED_DOG_NAME_SEGMENT_RE = re.compile(r'\s*"([^"]*)"\s*')
-# Flat managed keywords use DSP-*; legacy X-* forms are still accepted when reading.
-FLAT_KEYWORD_PREFIX = "DSP-"
-LEGACY_FLAT_KEYWORD_PREFIX = "X-"
-FLAT_KEYWORD_LEGACY_RE = re.compile(r"^(?:DSP|X)-([^:]+):\s*(.+)$", re.IGNORECASE)
+# Flat managed keywords are written as X-*; DSP-* and pipe forms are still accepted when reading.
+FLAT_KEYWORD_PREFIX = "X-"
+LEGACY_FLAT_KEYWORD_PREFIX = "DSP-"
+FLAT_KEYWORD_COLON_RE = re.compile(r"^(?:DSP|X)-([^:]+):\s*(.+)$", re.IGNORECASE)
 FLAT_KEYWORD_HIER_RE = re.compile(r"^(?:DSP|X)-([^|]+)\|(.+)$", re.IGNORECASE)
 DOGSPORTPHOTO_HIER_RE = re.compile(
 	r"^(dogsportphoto(?:\.com)?)\|([^|]+)\|(.+)$",
@@ -44,9 +44,9 @@ MATCH_X_FIELDS = frozenset(
 	}
 )
 
-# Short field names previously written as X-<field>: <value> / X-<field>|<value>.
-# Only these (plus id-<org>) are scrubbed on write; other X-* keywords are kept.
-LEGACY_X_FIELDS = frozenset(
+# Short field names used as X-<field>: <value> (and scrubbed on write).
+# Only these (plus id-<org>) are managed flat tags; other X-* keywords are kept.
+MANAGED_FLAT_FIELDS = frozenset(
 	MATCH_X_FIELDS
 	| {
 		"img",
@@ -60,8 +60,13 @@ LEGACY_X_FIELDS = frozenset(
 	}
 )
 
-# Flat Keywords writes (DSP-field: value) are limited to this subset.
-FLAT_KEYWORD_WRITE_FIELDS = frozenset({"handler", "team", "dog", "event"})
+# Back-compat alias used by older call sites / docs wording.
+LEGACY_X_FIELDS = MANAGED_FLAT_FIELDS
+
+# Default flat Keywords writes: team (else handler), plus event.
+# --add-flat can request any managed flat field (or id-<org>).
+ADD_FLAT_AVAILABLE_FIELDS = tuple(sorted(MANAGED_FLAT_FIELDS))
+ADD_FLAT_USAGE_LIST = ", ".join(ADD_FLAT_AVAILABLE_FIELDS) + ", id-<org>"
 
 
 def normalize_quoted_dog_name(value: str) -> str:
@@ -109,7 +114,7 @@ def parse_x_keyword(keyword):
 		field = _canonicalize_field_name(match.group(1))
 		value = strip_stray_keyword_quotes(match.group(2))
 		return field, value
-	match = FLAT_KEYWORD_LEGACY_RE.match(text)
+	match = FLAT_KEYWORD_COLON_RE.match(text)
 	if match:
 		field = _canonicalize_field_name(match.group(1))
 		value = strip_stray_keyword_quotes(match.group(2))
@@ -142,7 +147,7 @@ def format_keyword(field, value):
 
 
 def format_x_flat_keyword(field, value):
-	"""Return DSP-<short_field>: <value> flat keyword."""
+	"""Return X-<short_field>: <value> flat keyword."""
 	text = _normalized_keyword_value(field, value)
 	if text is None:
 		return None
@@ -150,23 +155,72 @@ def format_x_flat_keyword(field, value):
 
 
 def x_flat_keyword_from_managed(keyword):
-	"""Convert a managed keyword (any accepted form) to DSP-<field>: <value>."""
+	"""Convert a managed keyword (any accepted form) to X-<field>: <value>."""
 	field, value = parse_x_keyword(keyword)
 	if field is None or not value:
 		return None
 	return format_x_flat_keyword(field, value)
 
 
-def is_flat_keyword_write_field(field):
-	return field in FLAT_KEYWORD_WRITE_FIELDS
+def is_managed_flat_field(field):
+	"""True for short fields (or id-<org>) used as managed flat X- tags."""
+	if not field:
+		return False
+	if field.startswith("id-"):
+		return True
+	return field in MANAGED_FLAT_FIELDS
 
 
-def x_flat_keyword_for_write(keyword):
-	"""DSP-<field>: <value> only for handler/team/dog/event flat writes."""
-	field, value = parse_x_keyword(keyword)
-	if field is None or not value or not is_flat_keyword_write_field(field):
+# Back-compat alias.
+is_legacy_x_field = is_managed_flat_field
+
+
+def normalize_add_flat_tag(tag):
+	"""Normalize a --add-flat token to a short field name (or id-<org>)."""
+	if tag is None:
 		return None
-	return format_x_flat_keyword(field, value)
+	text = str(tag).strip().lower()
+	if not text:
+		return None
+	if text.startswith("x-"):
+		text = text[2:]
+	elif text.startswith("dsp-"):
+		text = text[4:]
+	text = _canonicalize_field_name(text)
+	if not is_managed_flat_field(text):
+		return None
+	return text
+
+
+def select_flat_keywords_for_write(managed_keywords, add_flat_fields=()):
+	"""Build default/extra flat X- keywords: team else handler, plus event, plus --add-flat."""
+	by_field = {}
+	for keyword in managed_keywords or []:
+		field, value = parse_x_keyword(keyword)
+		if field and value:
+			by_field[field] = value
+
+	selected = set()
+	for field in add_flat_fields or ():
+		normalized = normalize_add_flat_tag(field)
+		if normalized:
+			selected.add(normalized)
+	if "team" in by_field:
+		selected.add("team")
+	elif "handler" in by_field:
+		selected.add("handler")
+	if "event" in by_field:
+		selected.add("event")
+
+	result = set()
+	for field in selected:
+		value = by_field.get(field)
+		if not value:
+			continue
+		flat = format_x_flat_keyword(field, value)
+		if flat:
+			result.add(flat)
+	return result
 
 
 def keyword_x_field(keyword):
@@ -224,42 +278,35 @@ def existing_dogsportphoto_com_keywords(keywords):
 	return present
 
 
-def existing_x_flat_keywords(keywords):
-	"""Exact on-file DSP-* keywords (colon or pipe); legacy X-* ignored."""
+def existing_managed_flat_keywords(keywords):
+	"""Exact on-file managed flat keywords (X-* / DSP-*, colon or pipe)."""
 	present = set()
-	prefix = FLAT_KEYWORD_PREFIX.lower()
 	for keyword in keywords or []:
 		if not keyword:
 			continue
 		text = strip_stray_keyword_quotes(keyword)
-		if not text.lower().startswith(prefix):
+		lower = text.lower()
+		if not (lower.startswith("x-") or lower.startswith("dsp-")):
 			continue
-		# Keep the on-file spelling so overwrite deletes match exactly.
-		if x_flat_keyword_from_managed(text):
+		field = keyword_x_field(text)
+		if is_managed_flat_field(field):
 			present.add(text)
 	return present
 
 
-def is_legacy_x_field(field):
-	"""True for short fields (or id-<org>) previously written under the X- prefix."""
-	if not field:
-		return False
-	if field.startswith("id-"):
-		return True
-	return field in LEGACY_X_FIELDS
+# Back-compat alias.
+existing_x_flat_keywords = existing_managed_flat_keywords
 
 
 def is_obsolete_managed_keyword(keyword):
-	"""True for known legacy X-* fields, dogsportphoto|* (no .com), and DSP-*|."""
+	"""True for managed X-*/DSP-*, dogsportphoto|* (no .com)."""
 	text = strip_stray_keyword_quotes(keyword)
 	if not text or not is_x_keyword(text):
 		return False
 	lower = text.lower()
-	if lower.startswith("x-"):
-		return is_legacy_x_field(keyword_x_field(text))
+	if lower.startswith("x-") or lower.startswith("dsp-"):
+		return is_managed_flat_field(keyword_x_field(text))
 	if lower.startswith("dogsportphoto|"):
-		return True
-	if lower.startswith("dsp-") and FLAT_KEYWORD_HIER_RE.match(text):
 		return True
 	return False
 

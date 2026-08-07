@@ -153,7 +153,7 @@ google_qr_to_timeseries.py --timezone America/Los_Angeles \
 
 Match queued event photos to run-order check-ins and write EXIF keywords.
 
-First step after timeseries export: reads photos from a queue directory, matches each image to photographer location, team check-in, and discipline using a local timeseries JSON file, writes keywords via exiftool according to `--keyword` (and optional rating), then renames and moves tagged files into `processed/`.
+First step after timeseries export: reads photos from a queue directory, matches each image to photographer location, team check-in, and discipline using a local timeseries JSON file, writes hierarchical keywords (and optional flat `X-*` keywords / rating), then renames and moves tagged files into `processed/`.
 
 ```text
 process_queue.py [options]
@@ -173,7 +173,8 @@ process_queue.py [options]
 | `--log FILE` | `process_queue-<pid>.log` | Log file path |
 | `--force` | | Always overwrite existing destination files, even when MD5 matches |
 | `--safe` | | Write to `_N` suffix paths instead of overwriting |
-| `--keyword MODE` | `hierarchical` | Keyword writes: `flat` / `f` (`DSP-field: value` for handler/team/dog/event), `hierarchical` / `h` (`dogsportphoto.com\|field\|value`), or `both` / `b` |
+| `--flat-keyword MODE` | `on` | Write flat `X-*` Keywords: `on` or `off` |
+| `--add-flat TAGS` | | Extra flat `X-*` tags when `--flat-keyword` is on (comma-separated). Available: `city`, `club`, `dis`, `dog`, `duel`, `event`, `handler`, `img`, `loc`, `msg`, `ofn`, `org`, `photog`, `photoreq`, `seq`, `team`, `type`, `venue`, `id-<org>` |
 | `-h`, `--help` | | Show usage |
 
 `--force` and `--safe` cannot be used together. `--in-place` cannot be combined with `--force` or `--safe`.
@@ -258,15 +259,17 @@ Event metadata from the `event` block becomes `dogsportphoto.com|event|`, `dogsp
 
 ### EXIF keywords written
 
-Keyword form is selected with `--keyword` (default `hierarchical`):
+Hierarchical `dogsportphoto.com|<field>|<value>` paths are always written to `XMP-lr:HierarchicalSubject`.
 
-| Mode | Abbreviation | Writes |
-|------|--------------|--------|
-| `flat` | `f` | `DSP-<field>: <value>` on the flat `Keywords` tag for `handler`, `team`, `dog`, and `event` only |
-| `hierarchical` | `h` | `dogsportphoto.com\|<field>\|<value>` on `XMP-lr:HierarchicalSubject` (full managed field set) |
-| `both` | `b` | Both forms, each on its own tag |
+Flat `X-<field>: <value>` Keywords are controlled by `--flat-keyword` (default `on`):
 
-Existing non-managed keywords are preserved. Selected form(s) are always rewritten: existing `dogsportphoto.com|*` on `HierarchicalSubject` and/or `DSP-field: value` on `Keywords` are removed, then the full final set is written. Obsolete managed spellings (`dogsportphoto|*`, pipe `DSP-*|`, and previously used `X-<field>` tags such as `team`/`handler`/`img`/`id-*`) are removed when keywords are written; unrelated `X-*` keywords are left alone.
+| Flat default | Writes |
+|--------------|--------|
+| Primary | `X-team: …` when team is present, otherwise `X-handler: …` |
+| Event | `X-event: …` when event is present |
+| Extra | Any tags listed in `--add-flat` that have values on the image |
+
+Existing non-managed keywords are preserved. Hierarchical paths are always rewritten. When flat keywords are enabled, managed flat spellings (`X-*` / `DSP-*` for known fields) are removed and the selected `X-*` set is rewritten. Obsolete `dogsportphoto|*` entries are removed. Unrelated `X-*` keywords are left alone.
 
 When a photo match is found, the script also writes **IPTC Core** metadata via exiftool:
 
@@ -284,7 +287,7 @@ When a photo match is found, the script also writes **IPTC Core** metadata via e
 | Source | `{event} ({dogsportphoto_code})` |
 | Transmission Reference | `image_uuid` |
 
-Hierarchical managed keywords are written to `XMP-lr:HierarchicalSubject`; flat `DSP-field: value` keywords are written to `Keywords` for `handler` / `team` / `dog` / `event` only (colon form, never pipe). Selected `--keyword` mode(s) always overwrite their destination entries. Obsolete `dogsportphoto|*`, pipe `DSP-*|`, and known legacy `X-<field>` entries are removed on write. Parsers still accept those older forms when reading.
+Hierarchical managed keywords are always written to `XMP-lr:HierarchicalSubject`. Flat `X-field: value` keywords are written to `Keywords` when `--flat-keyword` is on. Parsers still accept `DSP-*`, pipe forms, and `dogsportphoto|*` when reading older files.
 
 **Event keywords:** `event`, `organization`, `club`, `venue`, `type`, `city`
 
@@ -310,11 +313,11 @@ Example: `dogsportphoto.com|sequence|260731-1614.30512-JN` for a 2026-07-31 16:1
 | **`--force`** | Overwrite even when MD5 matches |
 | **`--safe`** | Allocate `_N` suffix filenames |
 | **MD5 skip** | Without `--force`, identical destination content is not re-written |
-| **Keyword overwrite** | Selected managed keyword forms are always rewritten |
+| **Keyword overwrite** | Hierarchical paths always rewritten; flat `X-*` rewritten when enabled |
 
 ### Re-processing
 
-In the event of problems processing files, files can be re-processed. Selected `--keyword` form(s) are fully rewritten; obsolete `X-*` / `dogsportphoto|*` / pipe `DSP-*|` keywords are removed.
+In the event of problems processing files, files can be re-processed. Hierarchical keywords are fully rewritten; flat `X-*` keywords follow `--flat-keyword` / `--add-flat`; obsolete managed spellings are removed.
 
 ### Rating (`--rating`)
 
