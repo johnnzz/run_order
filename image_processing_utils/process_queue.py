@@ -3,6 +3,32 @@
 #
 # SPDX-License-Identifier: MIT
 # See LICENSE for the full license text.
+#
+# Usage:
+#   process_queue.py [options]
+#
+# Options:
+#   -q, --queue DIR         Queue directory [default: ./queue].
+#   -p, --processed DIR     Processed output directory [default: ./processed].
+#   -b, --backup DIR        Backup directory. If omitted, no backup is made.
+#   -t, --timeline FILE     Timeseries JSON file [default: ./eventname-ts.json].
+#       --timeline2 FILE    Optional second timeseries file merged into --timeline.
+#   -r, --rating NUM        Set rating on images that have none (omit to leave ratings unchanged).
+#   --status                Print directory paths and file counts.
+#   --process               Process files in the queue directory.
+#   --in-place              Write EXIF/IPTC in the queue file; do not rename, move, or backup.
+#   --log FILE              Write log output to FILE (stdout only when omitted).
+#   --force                 Always overwrite existing destination files.
+#   --safe                  Write to _N suffix paths instead of overwriting.
+#   --output MODE           Output layout: flat or subdir [default: flat].
+#   --flat-keyword MODE     Write flat X- keywords: on or off [default: on].
+#   --add-flat TAGS         Extra flat X- tags when --flat-keyword is on
+#                           (comma-separated). Available: city, club, dis,
+#                           dog, duel, event, handler, img, loc, msg, ofn,
+#                           org, photog, photoreq, seq, team, type, venue,
+#                           id-<org>.
+#   --verbosity LEVEL       Console output: quiet or full [default: quiet].
+#   -h, --help              Show this message.
 """Match queued event photos to run-order check-ins and write EXIF keywords.
 
 Processes photos present in a queue directory against a time-series file (or two)
@@ -24,41 +50,13 @@ HierarchicalSubject. Flat Keywords writes are controlled by ``--flat-keyword``
 extra tags from ``--add-flat``. Managed keyword forms are rewritten on write.
 Results can be reviewed with the summarize_dir.py script.
 
-Portable and self-contained: only requires docopt (stdlib otherwise).
-Also requires exiftool on PATH for --process.
-
+Portable and self-contained (stdlib only). Requires exiftool on PATH for --process.
 With no options, prints this help message.
-
-Usage:
-  process_queue.py [options]
-
-
-Options:
-  -q, --queue DIR         Queue directory [default: ./queue].
-  -p, --processed DIR     Processed output directory [default: ./processed].
-  -b, --backup DIR        Backup directory. If omitted, no backup is made.
-  -t, --timeline FILE     Timeseries JSON file [default: ./eventname-ts.json].
-      --timeline2 FILE    Optional second timeseries file merged into --timeline.
-  -r, --rating NUM        Set rating on images that have none (omit to leave ratings unchanged).
-  --status                Print directory paths and file counts.
-  --process               Process files in the queue directory.
-  --in-place              Write EXIF/IPTC in the queue file; do not rename, move, or backup.
-  --log FILE              Write log output to FILE (stdout only when omitted).
-  --force                 Always overwrite existing destination files.
-  --safe                  Write to _N suffix paths instead of overwriting.
-  --output MODE           Output layout: flat or subdir [default: flat].
-  --flat-keyword MODE     Write flat X- keywords: on or off [default: on].
-  --add-flat TAGS         Extra flat X- tags when --flat-keyword is on
-                          (comma-separated). Available: city, club, dis,
-                          dog, duel, event, handler, img, loc, msg, ofn,
-                          org, photog, photoreq, seq, team, type, venue,
-                          id-<org>.
-  --verbosity LEVEL       Console output: quiet or full [default: quiet].
-  -h, --help              Show this message.
 """
 
 from __future__ import annotations
 
+import argparse
 import bisect
 import copy
 import subprocess
@@ -80,8 +78,6 @@ try:
 	from zoneinfo import ZoneInfo
 except ImportError:  # pragma: no cover - Python < 3.9
 	ZoneInfo = None
-
-from docopt import docopt
 
 import _run_order_timeseries as rot
 from _exiftool_session import ExifToolSession
@@ -111,6 +107,10 @@ from x_keywords import (
 )
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_QUEUE_DIR = "./queue"
+DEFAULT_PROCESSED_DIR = "./processed"
+DEFAULT_TIMELINE_FILE = "./eventname-ts.json"
 
 IMAGE_DATE_TAGS = (
 	"SubSecCreateDate",
@@ -4085,30 +4085,64 @@ def process_queue(
 	remove_empty_queue_dirs(queue_dir)
 	return written_summary_path
 
+
+class _UsageHelpFormatter(argparse.RawDescriptionHelpFormatter):
+	def add_usage(self, usage, actions, groups, prefix=None):
+		return super().add_usage(usage, actions, groups, prefix="Usage: ")
+
+
+def build_parser():
+	parser = argparse.ArgumentParser(
+		prog="process_queue.py",
+		formatter_class=_UsageHelpFormatter,
+		description="Match queued event photos to run-order check-ins and write EXIF keywords.",
+	)
+	parser.add_argument("-q", "--queue", default=DEFAULT_QUEUE_DIR, metavar="DIR", help="Queue directory.")
+	parser.add_argument("-p", "--processed", default=DEFAULT_PROCESSED_DIR, metavar="DIR", help="Processed output directory.")
+	parser.add_argument("-b", "--backup", metavar="DIR", help="Backup directory. If omitted, no backup is made.")
+	parser.add_argument("-t", "--timeline", default=DEFAULT_TIMELINE_FILE, metavar="FILE", help="Timeseries JSON file.")
+	parser.add_argument("--timeline2", metavar="FILE", help="Optional second timeseries file merged into --timeline.")
+	parser.add_argument("-r", "--rating", type=int, metavar="NUM", help="Set rating on images that have none.")
+	parser.add_argument("--status", action="store_true", help="Print directory paths and file counts.")
+	parser.add_argument("--process", action="store_true", help="Process files in the queue directory.")
+	parser.add_argument("--in-place", action="store_true", help="Write EXIF/IPTC in the queue file; do not rename, move, or backup.")
+	parser.add_argument("--log", metavar="FILE", help="Write log output to FILE (stdout only when omitted).")
+	parser.add_argument("--force", action="store_true", help="Always overwrite existing destination files.")
+	parser.add_argument("--safe", action="store_true", help="Write to _N suffix paths instead of overwriting.")
+	parser.add_argument("--output", default="flat", metavar="MODE", help="Output layout: flat or subdir.")
+	parser.add_argument("--flat-keyword", default="on", metavar="MODE", help="Write flat X- keywords: on or off.")
+	parser.add_argument("--add-flat", metavar="TAGS", help="Extra flat X- tags when --flat-keyword is on (comma-separated).")
+	parser.add_argument("--verbosity", default="quiet", metavar="LEVEL", help="Console output: quiet or full.")
+	return parser
+
+
 def main():
-	args = docopt(__doc__)
-	if not args["--process"] and not args["--status"]:
-		print(__doc__)
+	parser = build_parser()
+	args = parser.parse_args()
+	if not args.process and not args.status:
+		parser.print_help()
 		return
 
-	log_file = args["--log"]
-	verbosity = parse_verbosity(args["--verbosity"])
+	log_file = args.log
+	verbosity = parse_verbosity(args.verbosity)
 	setup_logging(log_file, quiet=(verbosity == VERBOSITY_QUIET))
 	if log_file:
 		logger.info("Logging to %s", log_file)
 
-	queue_dir = args["--queue"]
-	processed_dir = args["--processed"]
-	backup_dir = args["--backup"] or None
+	queue_dir = args.queue
+	processed_dir = args.processed
+	backup_dir = args.backup or None
 
-	if args["--process"]:
-		if args["--force"] and args["--safe"]:
+	if args.process:
+		if args.force and args.safe:
 			raise SystemExit("Cannot use --force and --safe together")
-		if args["--in-place"] and (args["--force"] or args["--safe"]):
+		if args.in_place and (args.force or args.safe):
 			raise SystemExit("Cannot use --in-place with --force or --safe")
-		timeline_path = args["--timeline"] or DEFAULT_TIMELINE_FILE
-		merge_path = args["--timeline2"] or None
-		in_place = bool(args["--in-place"])
+		if not os.path.isdir(queue_dir):
+			raise SystemExit("Error: Queue directory not found")
+		timeline_path = args.timeline or DEFAULT_TIMELINE_FILE
+		merge_path = args.timeline2 or None
+		in_place = bool(args.in_place)
 		# In-place keeps quiet console output by default, but still logs the same
 		# startup / per-image detail lines used by --verbosity full.
 		detail_logs = verbosity == VERBOSITY_FULL or in_place
@@ -4133,9 +4167,9 @@ def main():
 			if in_place:
 				print_quiet_status("In-place mode: metadata only", verbosity=verbosity)
 		time_series = load_time_series(timeline_path, merge_path=merge_path)
-		output_mode = parse_output_mode(args["--output"])
-		flat_keyword = parse_flat_keyword_mode(args["--flat-keyword"]) == FLAT_KEYWORD_ON
-		add_flat_fields = parse_add_flat_tags(args["--add-flat"])
+		output_mode = parse_output_mode(args.output)
+		flat_keyword = parse_flat_keyword_mode(args.flat_keyword) == FLAT_KEYWORD_ON
+		add_flat_fields = parse_add_flat_tags(args.add_flat)
 		if detail_logs:
 			if not in_place:
 				logger.info("Output layout: %s", output_mode)
@@ -4154,9 +4188,9 @@ def main():
 			processed_dir=processed_dir,
 			backup_dir=None if in_place else backup_dir,
 			time_series=time_series,
-			default_rating=int(args["--rating"]) if args["--rating"] is not None else None,
-			force=args["--force"],
-			safe=args["--safe"],
+			default_rating=args.rating,
+			force=args.force,
+			safe=args.safe,
 			in_place=in_place,
 			timeline_path=timeline_path,
 			output_mode=output_mode,

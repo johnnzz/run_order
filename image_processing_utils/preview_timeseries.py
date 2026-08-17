@@ -3,6 +3,16 @@
 #
 # SPDX-License-Identifier: MIT
 # See LICENSE for the full license text.
+#
+# Usage:
+#   preview_timeseries.py <timeseries>
+#   preview_timeseries.py -h | --help
+#
+# Arguments:
+#   <timeseries>  Path to a run_order timeseries JSON file.
+#
+# Options:
+#   -h, --help  Show this message.
 """
 Preview team check-ins from a timeseries file.
 
@@ -12,24 +22,13 @@ process_queue.py writes into HierarchicalSubject.
 Fixit corrections are written 0.01s after the original (wrong or Unspecified)
 check-in at the same location. When a correction exists, the original entry is
 omitted from the preview.
-
-Usage:
-  preview_timeseries.py <timeseries>
-  preview_timeseries.py -h | --help
-
-Arguments:
-  <timeseries>  Path to a run_order timeseries JSON file.
-
-Options:
-  -h, --help  Show this message.
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
 from datetime import timedelta, timezone
-
-from docopt import docopt
 
 from process_queue import load_time_series
 from x_keywords import format_keyword
@@ -130,9 +129,25 @@ def preview_timeseries(path: str) -> int:
 	return 0
 
 
+class _UsageHelpFormatter(argparse.RawDescriptionHelpFormatter):
+	def add_usage(self, usage, actions, groups, prefix=None):
+		return super().add_usage(usage, actions, groups, prefix="Usage: ")
+
+
+def build_parser():
+	parser = argparse.ArgumentParser(
+		prog="preview_timeseries.py",
+		formatter_class=_UsageHelpFormatter,
+		description="Preview team check-ins from a timeseries file.",
+	)
+	parser.add_argument("timeseries", help="Path to a run_order timeseries JSON file.")
+	return parser
+
+
 def main(argv=None) -> int:
-	args = docopt(__doc__, argv=argv)
-	return preview_timeseries(args["<timeseries>"])
+	parser = build_parser()
+	args = parser.parse_args(argv)
+	return preview_timeseries(args.timeseries)
 
 
 if __name__ == "__main__":

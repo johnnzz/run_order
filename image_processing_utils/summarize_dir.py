@@ -3,31 +3,30 @@
 #
 # SPDX-License-Identifier: MIT
 # See LICENSE for the full license text.
+#
+# Usage:
+#   summarize_dir.py [<dir>]
+#   summarize_dir.py -h | --help
+#
+# Arguments:
+#   <dir>  Root directory to scan [default: .].
+#
+# Options:
+#   -h, --help  Show this message.
 """
 Print a human-readable EXIF summary of images in a directory tree.
 
 Inspection utility for verifying process_queue output or reviewing staged
 publish/ folders. Not part of the required processing pipeline.
-
-Usage:
-  summarize_dir.py [<dir>]
-  summarize_dir.py -h | --help
-
-Arguments:
-  <dir>  Root directory to scan [default: .].
-
-Options:
-  -h, --help  Show this message.
 """
 
+import argparse
 import json
 import os
 import re
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
-
-from docopt import docopt
 
 from _graceful_interrupt import abort_if_interrupt_requested, install_graceful_interrupt_handler
 
@@ -442,13 +441,29 @@ def summarize_directory(root_dir):
 			print("{}{}".format(DETAIL_INDENT, line))
 		abort_if_interrupt_requested(completed_item=path)
 
+class _UsageHelpFormatter(argparse.RawDescriptionHelpFormatter):
+	def add_usage(self, usage, actions, groups, prefix=None):
+		return super().add_usage(usage, actions, groups, prefix="Usage: ")
+
+def build_parser():
+	parser = argparse.ArgumentParser(
+		prog="summarize_dir.py",
+		formatter_class=_UsageHelpFormatter,
+		description="Print a human-readable EXIF summary of images in a directory tree.",
+	)
+	parser.add_argument("dir", nargs="?", default=".", help="Root directory to scan.")
+	return parser
+
 def main():
+	parser = build_parser()
 	if len(sys.argv) == 1:
-		print(__doc__)
+		parser.print_help()
 		return
-	args = docopt(__doc__)
-	root_dir = args["<dir>"] or "."
-	summarize_directory(root_dir)
+	args = parser.parse_args()
+	try:
+		summarize_directory(args.dir)
+	except FileNotFoundError as exc:
+		raise SystemExit("Error: {}".format(exc)) from None
 
 if __name__ == "__main__":
 	main()
