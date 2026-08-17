@@ -29,19 +29,7 @@ For ad-hoc inspection of tagged output, use `summarize_dir.py` on `processed/` o
 
 ### Python packages
 
-CLI utilities in this directory need **docopt**. Install from here:
-
-```bash
-pip install -r requirements.txt
-```
-
-Or install only docopt:
-
-```bash
-pip install docopt
-```
-
-**Python version:** 3.9+ recommended (`zoneinfo` for timezone handling). Older 3.x may work with reduced timezone support.
+CLI utilities in this directory use the **Python standard library only** (no pip packages). Python 3.9+ is recommended (`zoneinfo` for timezone handling). Older 3.x may work with reduced timezone support.
 
 ### exiftool (system dependency)
 
@@ -145,7 +133,7 @@ google_qr_to_timeseries.py --timezone America/Los_Angeles \
   "https://docs.google.com/spreadsheets/d/ABC123/edit"
 ```
 
-**Dependencies:** `docopt`, `_run_order_timeseries.py`. No exiftool.
+**Dependencies:** `_run_order_timeseries.py`. No exiftool.
 
 ---
 
@@ -352,7 +340,7 @@ process_queue.py --process --safe --timeline event-ts.json
 process_queue.py --status -q ./queue -p ./processed
 ```
 
-**Dependencies:** `docopt`, `_run_order_timeseries.py`, **exiftool**.
+**Dependencies:** `_run_order_timeseries.py`, **exiftool**.
 
 Use `summarize_dir.py` to inspect EXIF on processed output.
 
@@ -412,7 +400,7 @@ stage_into_dirs.py --download-prefix "https://example.pixieset.com/gallery/" \
   --timeline event-ts.json
 ```
 
-**Dependencies:** `docopt`, `_run_order_timeseries.py`, **exiftool**.
+**Dependencies:** `_run_order_timeseries.py`, **exiftool**.
 
 ---
 
@@ -451,7 +439,7 @@ summarize_dir.py ./processed
 summarize_dir.py ./publish
 ```
 
-**Dependencies:** `docopt`, **exiftool**. No helper modules.
+**Dependencies:** **exiftool**. No helper modules.
 
 ---
 
@@ -466,4 +454,4 @@ summarize_dir.py ./publish
 | `summarize_dir.py` | Directory EXIF summary |
 | `_run_order_timeseries.py` | Internal timeseries schema, migration, entry parsing |
 | `../run_order.schema.json` | JSON Schema for v2 timeseries documents (optional validation) |
-| `requirements.txt` | Python deps (`docopt`) |
+| `requirements.txt` | Placeholder (stdlib only; no pip packages) |

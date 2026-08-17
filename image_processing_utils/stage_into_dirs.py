@@ -3,6 +3,19 @@
 #
 # SPDX-License-Identifier: MIT
 # See LICENSE for the full license text.
+#
+# Usage:
+#   stage_into_dirs.py [options]
+#
+# Options:
+#   --processed DIR   Processed photos directory [default: ./processed].
+#   --publish DIR     Publish directory [default: ./publish].
+#   --timeline FILE   Timeseries JSON file [default: ./eventname-ts.json].
+#   --download-prefix URL  Pixieset download URL prefix for clients.csv [default: ].
+#   --level NUM       Staging depth: 1=team folders only, 2=photographer/team [default: 1].
+#   --force           Always overwrite existing destination files.
+#   --safe            Write to _N suffix paths instead of overwriting.
+#   -h, --help        Show this message.
 """
 Stage tagged photos into team folders for publish and gallery delivery.
 
@@ -16,21 +29,9 @@ The script also produces clients.csv file with handler emails looked up
 from the time-series file.  This file can be used as a mail-merge and if
 everything is done correctly and luck is with you, can contain a direct 
 link to the photos for each team.
-
-Usage:
-  stage_into_dirs.py [options]
-
-Options:
-  --processed DIR   Processed photos directory [default: ./processed].
-  --publish DIR     Publish directory [default: ./publish].
-  --timeline FILE   Timeseries JSON file [default: ./eventname-ts.json].
-  --download-prefix URL  Pixieset download URL prefix for clients.csv [default: ].
-  --level NUM       Staging depth: 1=team folders only, 2=photographer/team [default: 1].
-  --force           Always overwrite existing destination files.
-  --safe            Write to _N suffix paths instead of overwriting.
-  -h, --help        Show this message.
 """
 
+import argparse
 import csv
 import hashlib
 import json
@@ -40,8 +41,6 @@ import re
 import shutil
 import subprocess
 import sys
-
-from docopt import docopt
 
 import _run_order_timeseries as rot
 from _graceful_interrupt import abort_if_interrupt_requested, install_graceful_interrupt_handler
@@ -592,23 +591,45 @@ def stage_processed(processed_dir, publish_dir, timeline_path, *, force=False, s
 
 	clear_processed_directory(processed_dir)
 
+class _UsageHelpFormatter(argparse.RawDescriptionHelpFormatter):
+	def add_usage(self, usage, actions, groups, prefix=None):
+		return super().add_usage(usage, actions, groups, prefix="Usage: ")
+
+def build_parser():
+	parser = argparse.ArgumentParser(
+		prog="stage_into_dirs.py",
+		formatter_class=_UsageHelpFormatter,
+		description="Stage tagged photos into team folders for publish and gallery delivery.",
+	)
+	parser.add_argument("--processed", default=DEFAULT_PROCESSED_DIR, metavar="DIR", help="Processed photos directory.")
+	parser.add_argument("--publish", default=DEFAULT_PUBLISH_DIR, metavar="DIR", help="Publish directory.")
+	parser.add_argument("--timeline", default=None, metavar="FILE", help="Timeseries JSON file.")
+	parser.add_argument("--download-prefix", default="", metavar="URL", help="Pixieset download URL prefix for clients.csv.")
+	parser.add_argument("--level", default=str(STAGING_LEVEL_DEFAULT), metavar="NUM", help="Staging depth: 1=team folders only, 2=photographer/team.")
+	parser.add_argument("--force", action="store_true", help="Always overwrite existing destination files.")
+	parser.add_argument("--safe", action="store_true", help="Write to _N suffix paths instead of overwriting.")
+	return parser
+
 def main():
+	parser = build_parser()
 	if len(sys.argv) == 1:
-		print(__doc__)
+		parser.print_help()
 		return
-	args = docopt(__doc__)
-	if args["--force"] and args["--safe"]:
+	args = parser.parse_args()
+	if args.force and args.safe:
 		raise SystemExit("Cannot use --force and --safe together")
+	if args.timeline is not None and not os.path.isfile(args.timeline):
+		raise SystemExit("Error: Timeseries file not found")
 	setup_logging()
 
 	stage_processed(
-		processed_dir=args["--processed"],
-		publish_dir=args["--publish"],
-		timeline_path=args["--timeline"] or DEFAULT_TIMELINE_FILE,
-		force=args["--force"],
-		safe=args["--safe"],
-		download_prefix=args["--download-prefix"] or "",
-		level=parse_staging_level(args["--level"]),
+		processed_dir=args.processed,
+		publish_dir=args.publish,
+		timeline_path=args.timeline or DEFAULT_TIMELINE_FILE,
+		force=args.force,
+		safe=args.safe,
+		download_prefix=args.download_prefix or "",
+		level=parse_staging_level(args.level),
 	)
 
 if __name__ == "__main__":

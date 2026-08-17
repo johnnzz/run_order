@@ -3,6 +3,14 @@
 #
 # SPDX-License-Identifier: MIT
 # See LICENSE for the full license text.
+#
+# Usage:
+#   google_qr_to_timeseries.py [options] <sheet_url>
+#
+# Options:
+#   --timezone TZ            IANA timezone for naive Log timestamps [default: America/New_York]
+#   --file PATH              Output timeseries JSON path (default: <event>-ts.json)
+#   -h, --help               Show this message.
 """
 Build a run_order timeseries JSON file from a Google Sheet.
 
@@ -47,18 +55,11 @@ defined in the QR scanner.
 This script fetches Setup, Event, Roster, and Log tabs
 from a published sheet URL and writes a schema 2.0 time-series file for
 process_queue.py to consume. No Google API credentials required.
-
-Usage:
-  google_qr_to_timeseries.py [options] <sheet_url>
-
-Options:
-  --timezone TZ            IANA timezone for naive Log timestamps [default: America/New_York]
-  --file PATH              Output timeseries JSON path (default: <event>-ts.json)
-  -h, --help               Show this message.
 """
 
 from __future__ import annotations
 
+import argparse
 import csv
 import io
 import json
@@ -73,8 +74,6 @@ from typing import Any, Optional
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
-
-from docopt import docopt
 
 import _run_order_timeseries as rot
 
@@ -1087,14 +1086,41 @@ def build_timeseries_from_sheet(
     return destination
 
 
+class _UsageHelpFormatter(argparse.RawDescriptionHelpFormatter):
+    def add_usage(self, usage, actions, groups, prefix=None):
+        return super().add_usage(usage, actions, groups, prefix="Usage: ")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="google_qr_to_timeseries.py",
+        formatter_class=_UsageHelpFormatter,
+        description="Build a run_order timeseries JSON file from a Google Sheet.",
+    )
+    parser.add_argument("sheet_url", help="Published Google Sheet URL.")
+    parser.add_argument(
+        "--timezone",
+        default=DEFAULT_SHEET_TIMEZONE,
+        metavar="TZ",
+        help="IANA timezone for naive Log timestamps.",
+    )
+    parser.add_argument(
+        "--file",
+        metavar="PATH",
+        help="Output timeseries JSON path (default: <event>-ts.json).",
+    )
+    return parser
+
+
 def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
     if argv is None and len(sys.argv) == 1:
-        print(__doc__)
+        parser.print_help()
         return 0
-    arguments = docopt(__doc__, argv=argv)
-    sheet_url = str(arguments["<sheet_url>"]).strip()
-    timezone_name = resolve_timezone_option(str(arguments["--timezone"]))
-    output_path = Path(arguments["--file"]).expanduser() if arguments["--file"] else None
+    arguments = parser.parse_args(argv)
+    sheet_url = str(arguments.sheet_url).strip()
+    timezone_name = resolve_timezone_option(str(arguments.timezone))
+    output_path = Path(arguments.file).expanduser() if arguments.file else None
 
     try:
         build_timeseries_from_sheet(
