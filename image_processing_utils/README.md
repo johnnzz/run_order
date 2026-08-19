@@ -151,7 +151,7 @@ process_queue.py [options]
 |--------|---------|-------------|
 | `-q`, `--queue DIR` | `./queue` | Input directory of photos to process |
 | `-p`, `--processed DIR` | `./processed` | Output directory for tagged, renamed photos |
-| `-b`, `--backup DIR` | *(none)* | Backup directory. **Omitted = no backup is made** |
+| `-b`, `--backup DIR` | *(none)* | Backup directory. **Repeatable.** **Omitted = no backup is made** |
 | `-t`, `--timeline FILE` | `./eventname-ts.json` | Primary run_order timeseries JSON file |
 | `--timeline2 FILE` | *(none)* | Optional second timeseries merged into `--timeline` |
 | `-r`, `--rating NUM` | *(none)* | Set star rating on images that have none; omit to leave ratings unchanged |
@@ -171,7 +171,7 @@ process_queue.py [options]
 
 **Default (no options)** — Prints usage (same as `-h` / `--help`).
 
-**`--status`** — Prints directory status: path and file count for queue, processed, and backup (backup listed only when `-b` was provided).
+**`--status`** — Prints directory status: path and file count for queue, processed, and each backup directory (backup listed only when `-b` was provided).
 
 **`--process`** — Main workflow:
 
@@ -180,7 +180,7 @@ process_queue.py [options]
 3. Read EXIF from each file via exiftool
 4. Match photo time + camera serial to run-order data
 5. Write keywords via exiftool (and rating only when `-r` / `--rating` is set)
-6. Optionally back up the original (only when `-b` is set; skipped with `--in-place`)
+6. Optionally back up the original to every `-b` directory (skipped when `-b` is omitted or with `--in-place`)
 7. Rename and move the file into processed (skipped with `--in-place`)
 
 **`--process --in-place`** — Same matching and EXIF/IPTC writes, but the queue file keeps its path and name. Pass-through and before-first-check-in files are also left in the queue unchanged. Console output still defaults to `--verbosity quiet`, but the log (`--log` or `--verbosity full`) includes the same per-image match details as a normal full-verbosity run.
@@ -205,12 +205,12 @@ When **neither** `--force` nor `--safe` is given (the default):
 queue/          →  read images, apply EXIF, rename
     ↓
 processed/      →  final tagged output (YYYYMMDDHHMMSScc-original.ext)
-backup/         →  optional copy of pre-tag originals (only with -b)
+backup/         →  optional copy of pre-tag originals (each -b directory)
 ```
 
 - Queue files may live in subdirectories; the script walks the tree and removes empty subdirs after processing.
 - Processed filenames are prefixed with capture time: `YYYYMMDDHHMMSS` + 2-digit centiseconds + `-` + original basename (any existing timestamp prefix on the original name is stripped first).
-- With `--safe`, if a destination filename already exists, `_1`, `_2`, … suffixes are used for both processed and backup paths.
+- With `--safe`, if a destination filename already exists in processed **or any backup directory**, `_1`, `_2`, … suffixes are used for the processed path and every backup path.
 - Without `--force`, files with identical MD5 at the destination are skipped (logged as unchanged); the queue copy is still removed on move when unchanged.
 
 ### Timeseries input
@@ -297,7 +297,7 @@ Example: `dogsportphoto.com|sequence|260731-1614.30512-JN` for a 2026-07-31 16:1
 
 | Feature | Behavior |
 |---------|----------|
-| **No backup by default** | Originals moved to processed unless `-b` is set |
+| **No backup by default** | Originals moved to processed unless `-b` is set (repeatable) |
 | **`--force`** | Overwrite even when MD5 matches |
 | **`--safe`** | Allocate `_N` suffix filenames |
 | **MD5 skip** | Without `--force`, identical destination content is not re-written |
@@ -332,7 +332,8 @@ process_queue.py --process --timeline MyEvent-1234-ts.json
 process_queue.py --process \
   --timeline primary-ts.json \
   --timeline2 supplemental-ts.json \
-  --backup ./backup
+  --backup ./photographer-backup \
+  --backup ./event-backup
 ```
 
 ```bash

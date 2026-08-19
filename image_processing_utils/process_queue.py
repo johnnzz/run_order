@@ -10,7 +10,7 @@
 # Options:
 #   -q, --queue DIR         Queue directory [default: ./queue].
 #   -p, --processed DIR     Processed output directory [default: ./processed].
-#   -b, --backup DIR        Backup directory. If omitted, no backup is made.
+#   -b, --backup DIR        Backup directory. Repeatable. If omitted, no backup is made.
 #   -t, --timeline FILE     Timeseries JSON file [default: ./eventname-ts.json].
 #       --timeline2 FILE    Optional second timeseries file merged into --timeline.
 #   -r, --rating NUM        Set rating on images that have none (omit to leave ratings unchanged).
@@ -36,7 +36,7 @@ and uses the data present in the time-series file to identify the handler, dog
 and event data, and then encodes that data in the image using exiftool keywords.
 
 Once the file has been processed, it is renamed and moved to a processed directory,
-and optionally an unmodified version is placed in a backup directory. With
+and optionally an unmodified version is placed in one or more backup directories. With
 ``--in-place``, metadata is written on the queue file and the file is left in place
 (no rename, move, or backup).
 
@@ -1431,13 +1431,35 @@ def processed_output_subdirectory(keywords, output_mode, *, match=None):
 	return None
 
 
+def normalize_backup_dirs(backup_dir):
+	"""Return backup directory paths as a list.
+
+	Accepts ``None``, a single path string, or a list/tuple of paths.
+	Empty values are omitted. If ``backup_dir`` is omitted or empty, no
+	backup is made.
+	"""
+	if backup_dir is None:
+		return []
+	if isinstance(backup_dir, str):
+		return [backup_dir] if backup_dir else []
+	if isinstance(backup_dir, (list, tuple)):
+		return [str(item) for item in backup_dir if item]
+	raise TypeError(
+		"backup_dir must be str, list, tuple, or None, not {}".format(
+			type(backup_dir).__name__
+		)
+	)
+
+
 def unmatched_processed_base(processed_dir, backup_dir):
 	processed_base = os.path.join(processed_dir, UNMATCHED_STAGING_DIR)
 	os.makedirs(processed_base, exist_ok=True)
-	backup_base = os.path.join(backup_dir, UNMATCHED_STAGING_DIR) if backup_dir else None
-	if backup_base:
+	backup_bases = []
+	for backup in normalize_backup_dirs(backup_dir):
+		backup_base = os.path.join(backup, UNMATCHED_STAGING_DIR)
 		os.makedirs(backup_base, exist_ok=True)
-	return processed_base, backup_base
+		backup_bases.append(backup_base)
+	return processed_base, backup_bases
 
 
 def primary_staging_dir_from_match(match):
@@ -1454,21 +1476,24 @@ def primary_staging_dir_from_match(match):
 
 
 def resolve_processed_paths(processed_dir, backup_dir, filename, keywords, *, output_mode, safe, match=None):
+	backup_dirs = normalize_backup_dirs(backup_dir)
 	subdir = processed_output_subdirectory(keywords, output_mode, match=match)
 	if subdir:
 		processed_base = os.path.join(processed_dir, subdir)
-		backup_base = os.path.join(backup_dir, subdir) if backup_dir else None
 		os.makedirs(processed_base, exist_ok=True)
-		if backup_base:
+		backup_bases = []
+		for backup in backup_dirs:
+			backup_base = os.path.join(backup, subdir)
 			os.makedirs(backup_base, exist_ok=True)
+			backup_bases.append(backup_base)
 	else:
 		processed_base = processed_dir
-		backup_base = backup_dir
+		backup_bases = list(backup_dirs)
 	if safe:
-		return unique_output_names(processed_base, backup_base, filename)
+		return unique_output_names(processed_base, backup_bases, filename)
 	processed_file = os.path.join(processed_base, filename)
-	backup_file = os.path.join(backup_base, filename) if backup_base else None
-	return filename, processed_file, backup_file
+	backup_files = [os.path.join(base, filename) for base in backup_bases]
+	return filename, processed_file, backup_files
 
 
 def copy_duel_photo_to_additional_staging_subdirs(
@@ -1488,17 +1513,19 @@ def copy_duel_photo_to_additional_staging_subdirs(
 		processed_base = os.path.join(processed_dir, subdir)
 		os.makedirs(processed_base, exist_ok=True)
 		dest_path = os.path.join(processed_base, filename)
-		backup_base = os.path.join(backup_dir, subdir) if backup_dir else None
-		if backup_base:
+		backup_bases = []
+		for backup in normalize_backup_dirs(backup_dir):
+			backup_base = os.path.join(backup, subdir)
 			os.makedirs(backup_base, exist_ok=True)
+			backup_bases.append(backup_base)
 		if safe:
-			filename, dest_path, backup_path = unique_output_names(
+			filename, dest_path, backup_paths = unique_output_names(
 				processed_base,
-				backup_base,
+				backup_bases,
 				os.path.basename(dest_path),
 			)
 		else:
-			backup_path = os.path.join(backup_base, filename) if backup_base else None
+			backup_paths = [os.path.join(base, filename) for base in backup_bases]
 		dest_path, copied = copy_destination(
 			source_path,
 			dest_path,
@@ -1507,7 +1534,7 @@ def copy_duel_photo_to_additional_staging_subdirs(
 		)
 		if copied:
 			logger.info("* Duel copy to %s", dest_path)
-		if backup_path:
+		for backup_path in backup_paths:
 			copy_destination(source_path, backup_path, force=force, safe=safe)
 
 
@@ -3014,17 +3041,17 @@ def move_queue_file_unmodified(
 	else:
 		logger.info("* Moving to processed without modification")
 	output_name = file
-	processed_base, backup_base = unmatched_processed_base(processed_dir, backup_dir)
+	processed_base, backup_bases = unmatched_processed_base(processed_dir, backup_dir)
 	if safe:
-		output_name, processed_file, backup_file = unique_output_names(
+		output_name, processed_file, backup_files = unique_output_names(
 			processed_base,
-			backup_base,
+			backup_bases,
 			output_name,
 		)
 	else:
 		processed_file = os.path.join(processed_base, output_name)
-		backup_file = os.path.join(backup_base, output_name) if backup_base else None
-	if backup_dir and backup_file:
+		backup_files = [os.path.join(base, output_name) for base in backup_bases]
+	for backup_file in backup_files:
 		backup_file, backed_up = copy_destination(
 			queue_file,
 			backup_file,
@@ -3109,14 +3136,15 @@ def move_destination(source_path, dest_path, *, force=False, safe=False):
 	return dest_path, True
 
 def unique_output_names(processed_dir, backup_dir, filename):
+	backup_dirs = normalize_backup_dirs(backup_dir)
 	candidate = filename
 	counter = 0
 	while True:
 		processed_path = os.path.join(processed_dir, candidate)
-		backup_path = os.path.join(backup_dir, candidate) if backup_dir else None
-		backup_exists = backup_path and os.path.exists(backup_path)
+		backup_paths = [os.path.join(backup, candidate) for backup in backup_dirs]
+		backup_exists = any(os.path.exists(path) for path in backup_paths)
 		if not os.path.exists(processed_path) and not backup_exists:
-			return candidate, processed_path, backup_path
+			return candidate, processed_path, backup_paths
 		counter += 1
 		stem, ext = os.path.splitext(filename)
 		candidate = "{}_{}{}".format(stem, counter, ext)
@@ -3133,12 +3161,12 @@ def remove_empty_queue_dirs(queue_dir):
 
 def print_status(queue_dir, processed_dir, backup_dir=None):
 	logger.info("Directory status:")
-	entries = (
+	entries = [
 		("queue", queue_dir),
 		("processed", processed_dir),
-	)
-	if backup_dir:
-		entries = entries + (("backup", backup_dir),)
+	]
+	for backup in normalize_backup_dirs(backup_dir):
+		entries.append(("backup", backup))
 	for label, path in entries:
 		if os.path.isdir(path):
 			logger.info("  %s: %s (%d files)", label, path, count_files(path))
@@ -4004,7 +4032,7 @@ def process_queue(
 						summary_root = queue_dir
 					else:
 						new_name = build_processed_filename(image_json["image_time"], file)
-						output_name, processed_file, backup_file = resolve_processed_paths(
+						output_name, processed_file, backup_files = resolve_processed_paths(
 							processed_dir,
 							backup_dir,
 							new_name,
@@ -4022,7 +4050,7 @@ def process_queue(
 							flat_keyword=flat_keyword,
 							add_flat_fields=add_flat_fields,
 						)
-						if backup_dir and backup_file:
+						for backup_file in backup_files:
 							backup_file, backed_up = copy_destination(
 								queue_file,
 								backup_file,
@@ -4099,7 +4127,13 @@ def build_parser():
 	)
 	parser.add_argument("-q", "--queue", default=DEFAULT_QUEUE_DIR, metavar="DIR", help="Queue directory.")
 	parser.add_argument("-p", "--processed", default=DEFAULT_PROCESSED_DIR, metavar="DIR", help="Processed output directory.")
-	parser.add_argument("-b", "--backup", metavar="DIR", help="Backup directory. If omitted, no backup is made.")
+	parser.add_argument(
+		"-b",
+		"--backup",
+		action="append",
+		metavar="DIR",
+		help="Backup directory. Repeatable. If omitted, no backup is made.",
+	)
 	parser.add_argument("-t", "--timeline", default=DEFAULT_TIMELINE_FILE, metavar="FILE", help="Timeseries JSON file.")
 	parser.add_argument("--timeline2", metavar="FILE", help="Optional second timeseries file merged into --timeline.")
 	parser.add_argument("-r", "--rating", type=int, metavar="NUM", help="Set rating on images that have none.")
@@ -4131,7 +4165,7 @@ def main():
 
 	queue_dir = args.queue
 	processed_dir = args.processed
-	backup_dir = args.backup or None
+	backup_dir = normalize_backup_dirs(args.backup)
 
 	if args.process:
 		if args.force and args.safe:
@@ -4152,8 +4186,8 @@ def main():
 				logger.info("In-place mode: metadata only (no rename/move/backup)")
 			else:
 				logger.info("Processed directory: %s", processed_dir)
-				if backup_dir:
-					logger.info("Backup directory: %s", backup_dir)
+				for backup in backup_dir:
+					logger.info("Backup directory: %s", backup)
 			logger.info("Loading time series from %s", timeline_path)
 			if merge_path:
 				logger.info("Merging secondary time series from %s", merge_path)
