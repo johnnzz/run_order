@@ -230,10 +230,23 @@ def entry_message_to_photographer(entry: Mapping[str, Any]) -> Optional[str]:
     return None
 
 
+def entry_runlist(entry: Mapping[str, Any]) -> Optional[str]:
+    event_block = entry.get("event")
+    if isinstance(event_block, dict):
+        value = event_block.get("runlist")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    legacy = entry.get("runlist")
+    if isinstance(legacy, str) and legacy.strip():
+        return legacy.strip()
+    return None
+
+
 def build_entry_attendance_block(
     *,
     photo_request: Optional[str] = None,
     message_to_photographer: Optional[str] = None,
+    runlist: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
     event_block: dict[str, Any] = {}
     photo_bool = photo_request_to_bool(photo_request)
@@ -242,6 +255,9 @@ def build_entry_attendance_block(
     message = (message_to_photographer or "").strip().replace("\n", " ") or None
     if message:
         event_block["message_to_photographer"] = message
+    runlist_name = (runlist or "").strip() or None
+    if runlist_name:
+        event_block["runlist"] = runlist_name
     return event_block or None
 
 
@@ -397,6 +413,7 @@ def _legacy_entry_to_v2(
     event_block = build_entry_attendance_block(
         photo_request=photo_request_to_bool(entry_photo_request(entry)),
         message_to_photographer=entry_message_to_photographer(entry),
+        runlist=entry_runlist(entry),
     )
     if event_block is not None:
         payload["event"] = event_block
@@ -534,6 +551,7 @@ def build_team_check_in_entry(
     handler_phone: Optional[str] = None,
     photo_request: Optional[str] = None,
     message_to_photographer: Optional[str] = None,
+    runlist: Optional[str] = None,
     dog_name: Optional[str] = None,
     dog_code: Optional[str] = None,
     team_name: Optional[str] = None,
@@ -562,6 +580,7 @@ def build_team_check_in_entry(
     event_block = build_entry_attendance_block(
         photo_request=photo_request,
         message_to_photographer=message_to_photographer,
+        runlist=runlist,
     )
     if event_block is not None:
         entry["event"] = event_block
@@ -619,6 +638,7 @@ def entries_match(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
         and handler_email(left) == handler_email(right)
         and entry_photo_request(left) == entry_photo_request(right)
         and entry_message_to_photographer(left) == entry_message_to_photographer(right)
+        and entry_runlist(left) == entry_runlist(right)
     )
 
 
