@@ -55,6 +55,16 @@ def abort_if_interrupt_requested(*, completed_item=None):
 	raise SystemExit(130)
 
 
+def request_interrupt():
+	global _interrupt_requested
+	_interrupt_requested = True
+
+
+def clear_interrupt_request():
+	global _interrupt_requested
+	_interrupt_requested = False
+
+
 def reset_graceful_interrupt_for_tests():
 	global _interrupt_requested, _handler_installed
 	_interrupt_requested = False
@@ -62,5 +72,4 @@ def reset_graceful_interrupt_for_tests():
 
 
 def request_interrupt_for_tests():
-	global _interrupt_requested
-	_interrupt_requested = True
+	request_interrupt()
