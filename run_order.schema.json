@@ -206,6 +206,12 @@
                     "type": "string",
                     "maxLength": 200,
                     "description": "Optional one-line note from the handler to the photographer."
+                },
+                "runlist": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255,
+                    "description": "Run list name used for this team check-in when the event is in Runlist mode."
                 }
             }
         },
