@@ -937,7 +937,9 @@ def sequence_group_key(match, image_time, time_series):
 	dog = _normalize_sequence_text(match.get("dog"))
 	if location_path is None or discipline is None or dog is None:
 		return None
-	return ("solo", location_path, discipline, dog)
+	# Include check-in time so a later same-team check-in (Review split / fixit)
+	# starts a new sequence on re-process.
+	return ("solo", location_path, discipline, dog, match.get("check_in_time"))
 
 def generate_short_id():
 	return uuid.uuid4().hex[:8]
