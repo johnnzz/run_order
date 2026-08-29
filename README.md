@@ -275,6 +275,8 @@ Offline photo workflow scripts live in [`image_processing_utils/`](image_process
 
 The [dogsport-photo-tools](https://github.com/johnnzz/dogsport-photo-tools) webapp imports `_run_order_timeseries.py` from this directory for live check-ins and server-side processing. Set `RUN_ORDER_REPO_ROOT` on the server if the checkout is not at `../run_order` beside dogsport-photo-tools.
 
+End-to-end product behavior (web apps plus these CLIs) is in [dogsport-photo-tools/docs/functional-spec.md](https://github.com/johnnzz/dogsport-photo-tools/blob/master/docs/functional-spec.md). This repository remains the canonical timeseries JSON Schema (`run_order.schema.json`).
+
 ## Related tools
 
 - **dogsport-photo-tools** — writes and reads 2.0.x / 2.1.0 timeseries files for event check-ins and photo workflow

@@ -4,6 +4,8 @@ Copyright (c) 2026 John Navitsky. Released under the [MIT License](LICENSE).
 
 Standalone command-line tools for building run-order timeseries data, tagging event photos with EXIF keywords, staging output for publish, and inspecting image metadata. Copy a script plus any listed helper modules from this directory to run elsewhere.
 
+Product behavior for these tools together with the Team/Photo web apps is specified in [dogsport-photo-tools/docs/functional-spec.md](https://github.com/johnnzz/dogsport-photo-tools/blob/master/docs/functional-spec.md). This README remains the operator reference for CLI flags.
+
 | Script | Summary |
 |--------|---------|
 | `google_qr_to_timeseries.py` | Build a run_order timeseries JSON file from a Google Sheet |
